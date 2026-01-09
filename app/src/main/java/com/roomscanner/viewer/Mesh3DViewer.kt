@@ -175,14 +175,14 @@ private class Mesh3DRenderer(
                 gaussianSplatRenderer.createOnGlThread()
                 gaussianSplatRenderer.loadPLY(meshFile)
 
-                // Initialize camera with default bounds for splats
-                val bounds = OBJLoader.BoundingBox(
-                    minX = -2f, maxX = 2f,
-                    minY = -2f, maxY = 2f,
-                    minZ = -2f, maxZ = 2f
-                )
-                camera = OrbitCamera(bounds)
-                Log.d(TAG, "Gaussian Splats loaded successfully")
+                // Initialize camera with actual bounds from Gaussians
+                val bounds = gaussianSplatRenderer.bounds
+                if (bounds != null) {
+                    camera = OrbitCamera(bounds)
+                    Log.d(TAG, "Gaussian Splats loaded successfully with bounds: ${bounds.centerX}, ${bounds.centerY}, ${bounds.centerZ}")
+                } else {
+                    Log.e(TAG, "Failed to get bounds from Gaussian Splats")
+                }
             } else {
                 // Load traditional mesh
                 Log.d(TAG, "Loading mesh from ${meshFile.absolutePath}")

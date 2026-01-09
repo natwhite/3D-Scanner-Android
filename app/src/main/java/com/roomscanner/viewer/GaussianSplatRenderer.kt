@@ -35,6 +35,10 @@ class GaussianSplatRenderer {
     private var vertexCount = 0
     private var indexCount = 0
 
+    // Bounding box for camera setup
+    var bounds: OBJLoader.BoundingBox? = null
+        private set
+
     // Billboard vertex shader - uses corner attribute instead of gl_VertexID
     private val vertexShaderCode = """
         attribute vec3 aPosition;    // Gaussian center
@@ -159,6 +163,26 @@ class GaussianSplatRenderer {
         }
 
         Log.d(TAG, "Parsed ${gaussians.size} Gaussians, generating quads...")
+
+        // Calculate bounding box from Gaussian positions
+        var minX = Float.MAX_VALUE
+        var minY = Float.MAX_VALUE
+        var minZ = Float.MAX_VALUE
+        var maxX = Float.MIN_VALUE
+        var maxY = Float.MIN_VALUE
+        var maxZ = Float.MIN_VALUE
+
+        gaussians.forEach { g ->
+            minX = minOf(minX, g.position[0])
+            minY = minOf(minY, g.position[1])
+            minZ = minOf(minZ, g.position[2])
+            maxX = maxOf(maxX, g.position[0])
+            maxY = maxOf(maxY, g.position[1])
+            maxZ = maxOf(maxZ, g.position[2])
+        }
+
+        bounds = OBJLoader.BoundingBox(minX, maxX, minY, maxY, minZ, maxZ)
+        Log.d(TAG, "Bounding box: (${minX}, ${minY}, ${minZ}) to (${maxX}, ${maxY}, ${maxZ})")
 
         // Generate quad vertices (4 vertices per Gaussian)
         val vertices = mutableListOf<Float>()
