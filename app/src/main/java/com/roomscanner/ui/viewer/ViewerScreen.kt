@@ -1,19 +1,23 @@
 package com.roomscanner.ui.viewer
 
 import android.app.Activity
+import android.content.Intent
 import android.util.Log
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.roomscanner.data.Scan
+import com.roomscanner.viewer.Mesh3DViewer
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -101,7 +105,8 @@ fun ViewerScreen(
                     MeshCompletedView(
                         scan = scan!!,
                         meshFile = meshFile!!,
-                        pointCount = pointCount
+                        pointCount = pointCount,
+                        activity = activity
                     )
                 }
                 else -> {
@@ -305,115 +310,140 @@ fun ProcessingView(
 fun MeshCompletedView(
     scan: Scan,
     meshFile: java.io.File,
-    pointCount: Int
+    pointCount: Int,
+    activity: Activity
 ) {
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        // Success banner
+    var showWireframe by remember { mutableStateOf(false) }
+    var showTexture by remember { mutableStateOf(true) }
+    var showInfo by remember { mutableStateOf(false) }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        // 3D Viewer
+        Mesh3DViewer(
+            meshFile = meshFile,
+            modifier = Modifier.fillMaxSize(),
+            showWireframe = showWireframe,
+            showTexture = showTexture
+        )
+
+        // Top controls bar
         Surface(
-            modifier = Modifier.fillMaxWidth(),
-            color = MaterialTheme.colorScheme.primaryContainer,
-            tonalElevation = 2.dp
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopCenter),
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+            tonalElevation = 4.dp
         ) {
             Row(
-                modifier = Modifier.padding(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    Icons.Default.CheckCircle,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(32.dp)
-                )
-                Column {
-                    Text(
-                        text = "3D Model Complete!",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Wireframe toggle
+                    FilterChip(
+                        selected = showWireframe,
+                        onClick = { showWireframe = !showWireframe },
+                        label = { Text("Wireframe") }
                     )
-                    Text(
-                        text = "Your scan has been processed successfully",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+
+                    // Texture toggle
+                    FilterChip(
+                        selected = showTexture,
+                        onClick = { showTexture = !showTexture },
+                        label = { Text("Colors") }
                     )
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Info button
+                    IconButton(onClick = { showInfo = !showInfo }) {
+                        Icon(Icons.Default.CheckCircle, "Info")
+                    }
+
+                    // Share button
+                    IconButton(onClick = {
+                        shareOBJFile(activity, meshFile)
+                    }) {
+                        Icon(Icons.Default.Share, "Share")
+                    }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // Model info
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Card {
+        // Info panel (bottom sheet style)
+        if (showInfo) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 8.dp
+            ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        text = "Model Details",
-                        style = MaterialTheme.typography.titleMedium
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Model Details",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        TextButton(onClick = { showInfo = false }) {
+                            Text("Close")
+                        }
+                    }
+
+                    Divider()
 
                     DetailRow("Keyframes", "${scan.keyframeCount}")
                     DetailRow("Depth Points", pointCount.formatWithCommas())
                     DetailRow("Format", "OBJ (Wavefront)")
                     DetailRow("File Size", "${meshFile.length() / 1024} KB")
 
-                    Divider()
+                    Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        text = "File Location:",
-                        style = MaterialTheme.typography.labelSmall,
+                        text = "Controls:",
+                        style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = meshFile.absolutePath,
+                        text = "• Drag to rotate\n• Two fingers to pan\n• Pinch to zoom\n• Double tap to reset",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-            }
-
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "Next Steps:",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer
-                    )
-                    Text(
-                        text = "• View in 3D viewer (coming in Week 8)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer
-                    )
-                    Text(
-                        text = "• Import ${meshFile.name} into Blender or other 3D software",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer
-                    )
-                    Text(
-                        text = "• Use for AR/VR applications",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
         }
+    }
+}
+
+private fun shareOBJFile(activity: Activity, file: java.io.File) {
+    try {
+        val uri = FileProvider.getUriForFile(
+            activity,
+            "${activity.packageName}.fileprovider",
+            file
+        )
+
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "model/obj"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, "3D Room Scan")
+            putExtra(Intent.EXTRA_TEXT, "Sharing 3D model from Room Scanner")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+
+        activity.startActivity(Intent.createChooser(shareIntent, "Share 3D Model"))
+    } catch (e: Exception) {
+        Log.e("ViewerScreen", "Error sharing file", e)
     }
 }
 
