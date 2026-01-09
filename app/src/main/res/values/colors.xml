@@ -12,4 +12,7 @@
     <color name="tracking_good">#4CAF50</color>
     <color name="tracking_limited">#FFC107</color>
     <color name="tracking_lost">#F44336</color>
+
+    <!-- Launcher Icon -->
+    <color name="ic_launcher_background">#6200EE</color>
 </resources>

@@ -1,0 +1,22 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Simple 3D cube icon for Room Scanner -->
+    <group android:scaleX="0.5"
+        android:scaleY="0.5"
+        android:translateX="54"
+        android:translateY="54">
+        <!-- Cube -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M-24,-24 L24,-24 L24,24 L-24,24 Z"/>
+        <path
+            android:fillColor="#CCCCCC"
+            android:pathData="M24,-24 L48,0 L48,48 L24,24 Z"/>
+        <path
+            android:fillColor="#999999"
+            android:pathData="M-24,24 L24,24 L48,48 L0,48 Z"/>
+    </group>
+</vector>
