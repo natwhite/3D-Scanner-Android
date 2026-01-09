@@ -242,49 +242,78 @@ class MeshRenderer {
         )
 
         if (showTexture && !showWireframe) {
-            // Draw solid mesh with lighting
-            GLES20.glUseProgram(shaderProgram)
+            if (indexCount > 0) {
+                // Draw solid mesh with lighting
+                GLES20.glUseProgram(shaderProgram)
 
-            // Enable attributes
-            GLES20.glEnableVertexAttribArray(positionHandle)
-            GLES20.glEnableVertexAttribArray(colorHandle)
-            GLES20.glEnableVertexAttribArray(normalHandle)
+                // Enable attributes
+                GLES20.glEnableVertexAttribArray(positionHandle)
+                GLES20.glEnableVertexAttribArray(colorHandle)
+                GLES20.glEnableVertexAttribArray(normalHandle)
 
-            // Bind buffers
-            vertexBuffer?.position(0)
-            GLES20.glVertexAttribPointer(
-                positionHandle, 3, GLES20.GL_FLOAT, false, 0, vertexBuffer
-            )
+                // Bind buffers
+                vertexBuffer?.position(0)
+                GLES20.glVertexAttribPointer(
+                    positionHandle, 3, GLES20.GL_FLOAT, false, 0, vertexBuffer
+                )
 
-            colorBuffer?.position(0)
-            GLES20.glVertexAttribPointer(
-                colorHandle, 3, GLES20.GL_FLOAT, false, 0, colorBuffer
-            )
+                colorBuffer?.position(0)
+                GLES20.glVertexAttribPointer(
+                    colorHandle, 3, GLES20.GL_FLOAT, false, 0, colorBuffer
+                )
 
-            normalBuffer?.position(0)
-            GLES20.glVertexAttribPointer(
-                normalHandle, 3, GLES20.GL_FLOAT, false, 0, normalBuffer
-            )
+                normalBuffer?.position(0)
+                GLES20.glVertexAttribPointer(
+                    normalHandle, 3, GLES20.GL_FLOAT, false, 0, normalBuffer
+                )
 
-            // Set uniforms
-            GLES20.glUniformMatrix4fv(mvpMatrixHandle, 1, false, mvpMatrix, 0)
-            GLES20.glUniformMatrix4fv(modelMatrixHandle, 1, false, modelMatrix, 0)
-            GLES20.glUniform3fv(lightPosHandle, 1, lightPos, 0)
-            GLES20.glUniform3fv(viewPosHandle, 1, cameraPos, 0)
+                // Set uniforms
+                GLES20.glUniformMatrix4fv(mvpMatrixHandle, 1, false, mvpMatrix, 0)
+                GLES20.glUniformMatrix4fv(modelMatrixHandle, 1, false, modelMatrix, 0)
+                GLES20.glUniform3fv(lightPosHandle, 1, lightPos, 0)
+                GLES20.glUniform3fv(viewPosHandle, 1, cameraPos, 0)
 
-            // Draw triangles
-            indexBuffer?.position(0)
-            GLES20.glDrawElements(
-                GLES20.GL_TRIANGLES, indexCount, GLES20.GL_UNSIGNED_INT, indexBuffer
-            )
+                // Draw triangles
+                indexBuffer?.position(0)
+                GLES20.glDrawElements(
+                    GLES20.GL_TRIANGLES, indexCount, GLES20.GL_UNSIGNED_INT, indexBuffer
+                )
 
-            // Disable attributes
-            GLES20.glDisableVertexAttribArray(positionHandle)
-            GLES20.glDisableVertexAttribArray(colorHandle)
-            GLES20.glDisableVertexAttribArray(normalHandle)
+                // Disable attributes
+                GLES20.glDisableVertexAttribArray(positionHandle)
+                GLES20.glDisableVertexAttribArray(colorHandle)
+                GLES20.glDisableVertexAttribArray(normalHandle)
+            } else {
+                // Point cloud rendering (no faces)
+                GLES20.glUseProgram(wireframeProgram)
+
+                GLES20.glEnableVertexAttribArray(wireframePositionHandle)
+
+                vertexBuffer?.position(0)
+                GLES20.glVertexAttribPointer(
+                    wireframePositionHandle, 3, GLES20.GL_FLOAT, false, 0, vertexBuffer
+                )
+
+                GLES20.glUniformMatrix4fv(wireframeMVPHandle, 1, false, mvpMatrix, 0)
+
+                // Use vertex colors if available
+                if (colorBuffer != null) {
+                    // For point cloud, we need a simple shader that supports per-vertex colors
+                    // For now, use a single color
+                    GLES20.glUniform4f(wireframeColorHandle, 0.3f, 0.6f, 0.9f, 1f) // Blue points
+                }
+
+                GLES20.glPointSize(3.0f)
+
+                // Draw points
+                val vertexCount = vertexBuffer?.capacity()?.div(3) ?: 0
+                GLES20.glDrawArrays(GLES20.GL_POINTS, 0, vertexCount)
+
+                GLES20.glDisableVertexAttribArray(wireframePositionHandle)
+            }
         }
 
-        if (showWireframe) {
+        if (showWireframe && indexCount > 0) {
             // Draw wireframe
             GLES20.glUseProgram(wireframeProgram)
 
