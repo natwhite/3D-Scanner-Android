@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Room Scanner</string>
+
+    <!-- Capture Screen -->
+    <string name="start_scanning">Start Scanning</string>
+    <string name="stop_scanning">Stop Scanning</string>
+    <string name="tracking_good">Tracking: Good</string>
+    <string name="tracking_limited">Tracking: Limited</string>
+    <string name="tracking_lost">Tracking: Lost</string>
+    <string name="frames_captured">Frames: %1$d</string>
+    <string name="move_slowly">Move slowly around the room</string>
+    <string name="scanning_complete">Scan Complete!</string>
+
+    <!-- Processing Screen -->
+    <string name="processing_scan">Processing Scan</string>
+    <string name="feature_extraction">Extracting Features</string>
+    <string name="feature_matching">Matching Features</string>
+    <string name="structure_from_motion">Structure-from-Motion</string>
+    <string name="dense_reconstruction">Dense Reconstruction</string>
+    <string name="mesh_generation">Generating Mesh</string>
+    <string name="texturing">Applying Textures</string>
+    <string name="exporting">Exporting Model</string>
+    <string name="processing_complete">Processing Complete!</string>
+    <string name="processing_failed">Processing Failed</string>
+    <string name="cancel">Cancel</string>
+    <string name="time_remaining">Time remaining: %1$s</string>
+
+    <!-- Viewer Screen -->
+    <string name="view_model">View Model</string>
+    <string name="wireframe">Wireframe</string>
+    <string name="export">Export</string>
+    <string name="share">Share</string>
+    <string name="delete">Delete</string>
+
+    <!-- Scans List -->
+    <string name="my_scans">My Scans</string>
+    <string name="new_scan">New Scan</string>
+    <string name="no_scans">No scans yet</string>
+    <string name="scan_date">Scanned: %1$s</string>
+
+    <!-- Permissions -->
+    <string name="camera_permission_required">Camera permission is required to scan</string>
+    <string name="storage_permission_required">Storage permission is required</string>
+    <string name="grant_permission">Grant Permission</string>
+
+    <!-- Errors -->
+    <string name="arcore_not_supported">ARCore is not supported on this device</string>
+    <string name="arcore_not_installed">Please install ARCore</string>
+    <string name="error_occurred">An error occurred: %1$s</string>
+</resources>
