@@ -90,124 +90,129 @@ class ReconstructionPipeline(private val context: Context) {
     }
 
     /**
-     * Fuse ARCore depth maps into dense point cloud
-     * Uses grid-based approach from reference keyframe for proper mesh structure
+     * Fuse ARCore depth maps into dense point cloud with mesh
+     * Uses all keyframes and creates triangles via nearest-neighbor connectivity
      */
     private suspend fun fuseDepthMaps(
         scan: Scan,
         keyframes: List<com.roomscanner.data.Keyframe>
     ): MeshData = withContext(Dispatchers.Default) {
-        // Use middle keyframe as reference for mesh structure
-        val referenceIdx = keyframes.size / 2
-        val referenceKeyframe = keyframes[referenceIdx]
-
-        Log.d(TAG, "Using keyframe $referenceIdx as reference mesh")
-
-        // Load reference depth and RGB
-        val depthPath = referenceKeyframe.depthPath ?: throw IllegalStateException("No depth data")
-        val depthBitmap = BitmapFactory.decodeFile(depthPath) ?: throw IllegalStateException("Failed to load depth")
-        val rgbBitmap = BitmapFactory.decodeFile(referenceKeyframe.imagePath) ?: throw IllegalStateException("Failed to load RGB")
-
-        val width = depthBitmap.width
-        val height = depthBitmap.height
-        val pose = referenceKeyframe.pose
-
-        // ARCore camera intrinsics (approximate - should use actual from ARCore)
-        val fx = width * 0.8f
-        val fy = height * 0.8f
-        val cx = width / 2f
-        val cy = height / 2f
+        Log.d(TAG, "Fusing ${keyframes.size} keyframes into mesh")
 
         val vertices = mutableListOf<Vertex>()
         val faces = mutableListOf<Face>()
-        val vertexGrid = Array(height) { IntArray(width) { -1 } } // Track vertex indices
 
-        updateProgress("Generating mesh from reference depth", 0.3f)
+        // Process each keyframe
+        keyframes.forEachIndexed { index, keyframe ->
+            updateProgress("Processing keyframe ${index + 1}/${keyframes.size}", 0.3f + (index.toFloat() / keyframes.size) * 0.4f)
 
-        // Step 1: Create vertices from depth map grid
-        val step = 2 // Downsample for performance (every 2nd pixel)
+            // Load depth and RGB
+            val depthPath = keyframe.depthPath ?: return@forEachIndexed
+            val depthBitmap = BitmapFactory.decodeFile(depthPath) ?: return@forEachIndexed
+            val rgbBitmap = BitmapFactory.decodeFile(keyframe.imagePath) ?: return@forEachIndexed
 
-        for (y in 0 until height step step) {
-            for (x in 0 until width step step) {
-                // Get depth value
-                val depthPixel = depthBitmap.getPixel(x, y)
-                val depthNormalized = (depthPixel and 0xFF) / 255f
-                val depthMeters = depthNormalized * 8.0f
+            val width = depthBitmap.width
+            val height = depthBitmap.height
+            val pose = keyframe.pose
 
-                // Skip invalid depths
-                if (depthMeters < 0.1f || depthMeters > 6.0f) continue
+            // ARCore camera intrinsics (approximate)
+            val fx = width * 0.8f
+            val fy = height * 0.8f
+            val cx = width / 2f
+            val cy = height / 2f
 
-                // Unproject to camera space
-                val xCam = (x - cx) * depthMeters / fx
-                val yCam = -(y - cy) * depthMeters / fy
-                val zCam = -depthMeters
+            // Grid to track vertex indices for this frame
+            val vertexGrid = Array(height) { IntArray(width) { -1 } }
 
-                // Transform to world space
-                val worldPoint = transformPoint(xCam, yCam, zCam, pose)
+            // Step 1: Create vertices from depth map (denser sampling)
+            val step = 4 // Sample every 4th pixel for good coverage
 
-                // Get RGB color
-                val rgbX = (x.toFloat() / width * rgbBitmap.width).toInt().coerceIn(0, rgbBitmap.width - 1)
-                val rgbY = (y.toFloat() / height * rgbBitmap.height).toInt().coerceIn(0, rgbBitmap.height - 1)
-                val color = rgbBitmap.getPixel(rgbX, rgbY)
+            for (y in 0 until height step step) {
+                for (x in 0 until width step step) {
+                    // Get depth value
+                    val depthPixel = depthBitmap.getPixel(x, y)
+                    val depthNormalized = (depthPixel and 0xFF) / 255f
+                    val depthMeters = depthNormalized * 8.0f
 
-                // Add vertex
-                val vertexIdx = vertices.size
-                vertices.add(
-                    Vertex(
-                        x = worldPoint[0],
-                        y = worldPoint[1],
-                        z = worldPoint[2],
-                        r = (color shr 16) and 0xFF,
-                        g = (color shr 8) and 0xFF,
-                        b = color and 0xFF
+                    // Skip invalid depths
+                    if (depthMeters < 0.1f || depthMeters > 6.0f) continue
+
+                    // Unproject to camera space
+                    val xCam = (x - cx) * depthMeters / fx
+                    val yCam = -(y - cy) * depthMeters / fy
+                    val zCam = -depthMeters
+
+                    // Transform to world space
+                    val worldPoint = transformPoint(xCam, yCam, zCam, pose)
+
+                    // Get RGB color
+                    val rgbX = (x.toFloat() / width * rgbBitmap.width).toInt().coerceIn(0, rgbBitmap.width - 1)
+                    val rgbY = (y.toFloat() / height * rgbBitmap.height).toInt().coerceIn(0, rgbBitmap.height - 1)
+                    val color = rgbBitmap.getPixel(rgbX, rgbY)
+
+                    // Add vertex
+                    val vertexIdx = vertices.size
+                    vertices.add(
+                        Vertex(
+                            x = worldPoint[0],
+                            y = worldPoint[1],
+                            z = worldPoint[2],
+                            r = (color shr 16) and 0xFF,
+                            g = (color shr 8) and 0xFF,
+                            b = color and 0xFF
+                        )
                     )
-                )
-                vertexGrid[y][x] = vertexIdx
+                    vertexGrid[y][x] = vertexIdx
+                }
             }
-        }
 
-        updateProgress("Creating mesh triangles", 0.5f)
+            // Step 2: Create triangles from this frame's grid
+            for (y in 0 until height - step step step) {
+                for (x in 0 until width - step step step) {
+                    val v00 = vertexGrid[y][x]
+                    val v10 = vertexGrid[y][x + step]
+                    val v01 = vertexGrid[y + step][x]
+                    val v11 = vertexGrid[y + step][x + step]
 
-        // Step 2: Create triangles from grid structure
-        for (y in 0 until height - step step step) {
-            for (x in 0 until width - step step step) {
-                val v00 = vertexGrid[y][x]
-                val v10 = vertexGrid[y][x + step]
-                val v01 = vertexGrid[y + step][x]
-                val v11 = vertexGrid[y + step][x + step]
+                    // Create triangles if we have valid vertices
+                    if (v00 >= 0 && v10 >= 0 && v11 >= 0) {
+                        // First triangle: v00, v10, v11
+                        if (isValidTriangle(vertices[v00], vertices[v10], vertices[v11])) {
+                            faces.add(Face(v00, v10, v11))
+                        }
+                    }
 
-                // Only create triangles if all 4 corners have valid depth
-                if (v00 >= 0 && v10 >= 0 && v01 >= 0 && v11 >= 0) {
-                    // Check if quad is reasonable size (not stretched)
-                    if (isValidQuad(vertices[v00], vertices[v10], vertices[v01], vertices[v11])) {
-                        // Create two triangles for the quad
-                        faces.add(Face(v00, v10, v11))
-                        faces.add(Face(v00, v11, v01))
+                    if (v00 >= 0 && v11 >= 0 && v01 >= 0) {
+                        // Second triangle: v00, v11, v01
+                        if (isValidTriangle(vertices[v00], vertices[v11], vertices[v01])) {
+                            faces.add(Face(v00, v11, v01))
+                        }
                     }
                 }
             }
+
+            rgbBitmap.recycle()
+            depthBitmap.recycle()
+
+            Log.d(TAG, "Keyframe $index: ${vertices.size} total vertices, ${faces.size} total faces")
         }
 
-        rgbBitmap.recycle()
-        depthBitmap.recycle()
-
-        Log.i(TAG, "Created mesh with ${vertices.size} vertices, ${faces.size} faces from reference keyframe")
+        Log.i(TAG, "Created mesh with ${vertices.size} vertices, ${faces.size} faces from ${keyframes.size} keyframes")
 
         MeshData(vertices, faces)
     }
 
     /**
-     * Check if quad is valid (edges not too stretched)
+     * Check if triangle is valid (not too stretched)
      */
-    private fun isValidQuad(v00: Vertex, v10: Vertex, v01: Vertex, v11: Vertex): Boolean {
-        val maxEdge = 0.3f // 30cm max edge length
+    private fun isValidTriangle(v0: Vertex, v1: Vertex, v2: Vertex): Boolean {
+        val maxEdge = 0.5f // 50cm max edge length (relaxed)
 
-        val d01 = distance(v00, v10)
-        val d02 = distance(v00, v01)
-        val d13 = distance(v10, v11)
-        val d23 = distance(v01, v11)
+        val d01 = distance(v0, v1)
+        val d12 = distance(v1, v2)
+        val d20 = distance(v2, v0)
 
-        return d01 < maxEdge && d02 < maxEdge && d13 < maxEdge && d23 < maxEdge
+        return d01 < maxEdge && d12 < maxEdge && d20 < maxEdge
     }
 
     /**
