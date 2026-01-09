@@ -1,6 +1,7 @@
 package com.roomscanner.capture
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.ar.core.TrackingState
@@ -61,11 +62,15 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                 isCapturing = true
                 keyframeSelector.reset()
 
+                Log.d(TAG, "Started scanning: ${scan.name} (${scan.id})")
+                Log.d(TAG, "Scan directory: ${scan.scanDirectory.absolutePath}")
+
                 _uiState.value = CaptureUiState.Capturing(
                     frameCount = 0,
                     trackingState = TrackingState.TRACKING
                 )
             } catch (e: Exception) {
+                Log.e(TAG, "Failed to start scanning", e)
                 _uiState.value = CaptureUiState.Error(e.message ?: "Failed to start scanning")
             }
         }
@@ -82,6 +87,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
 
             currentScan?.let { scan ->
                 val frameCount = keyframeSelector.getKeyframeCount()
+                Log.d(TAG, "Stopped scanning with $frameCount keyframes")
 
                 if (frameCount > 0) {
                     val updatedScan = repository.updateScanStatus(
@@ -90,10 +96,12 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                     ).copy(keyframeCount = frameCount)
 
                     repository.saveScanMetadata(updatedScan)
+                    Log.i(TAG, "Scan completed: ${scan.name} - $frameCount keyframes saved")
 
                     _uiState.value = CaptureUiState.ScanComplete(updatedScan)
                 } else {
                     // No frames captured, delete scan
+                    Log.w(TAG, "No frames captured, deleting scan")
                     repository.deleteScan(scan)
                     _uiState.value = CaptureUiState.Ready
                 }
@@ -127,6 +135,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
 
         // Check if we should capture this frame
         if (keyframeSelector.shouldCaptureKeyframe(arFrame.cameraPose)) {
+            Log.d(TAG, "Capturing keyframe at pose: [${arFrame.cameraPose.tx}, ${arFrame.cameraPose.ty}, ${arFrame.cameraPose.tz}]")
             captureKeyframe(scan, arFrame)
         } else {
             arFrame.release()
@@ -140,6 +149,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             try {
                 val frameId = keyframeSelector.getKeyframeCount() - 1
+                val hasDepth = arFrame.depthImage != null
 
                 // Convert images to bytes
                 val imageBytes = withContext(Dispatchers.Default) {
@@ -161,6 +171,8 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                     pose = arFrame.cameraPose
                 )
 
+                Log.i(TAG, "Saved keyframe #$frameId - RGB: ${imageBytes.size / 1024}KB, Depth: ${if (hasDepth) "${depthBytes!!.size / 1024}KB" else "N/A"}")
+
                 // Update UI
                 val currentState = _uiState.value
                 if (currentState is CaptureUiState.Capturing) {
@@ -171,6 +183,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
 
             } catch (e: Exception) {
                 // Log error but continue capturing
+                Log.e(TAG, "Failed to save keyframe", e)
                 e.printStackTrace()
             } finally {
                 arFrame.release()
@@ -199,6 +212,10 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
     override fun onCleared() {
         super.onCleared()
         isCapturing = false
+    }
+
+    companion object {
+        private const val TAG = "CaptureViewModel"
     }
 }
 

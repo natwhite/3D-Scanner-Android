@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.Image
+import android.util.Log
 import androidx.core.graphics.scale
 import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
@@ -51,6 +52,7 @@ class ScanRepository(private val context: Context) {
         )
 
         saveScanMetadata(scan)
+        Log.i(TAG, "Created new scan: ${scan.name} at ${scanDir.absolutePath}")
         scan
     }
 
@@ -94,6 +96,7 @@ class ScanRepository(private val context: Context) {
         keyframes.add(keyframe)
         keyframeFile.writeText(gson.toJson(keyframes))
 
+        Log.d(TAG, "Saved keyframe #$frameId to ${imagePath.name} ${if (depthPath != null) "+ depth" else ""}")
         keyframe
     }
 
@@ -242,6 +245,8 @@ class ScanRepository(private val context: Context) {
     }
 
     companion object {
+        private const val TAG = "ScanRepository"
+
         @Volatile
         private var instance: ScanRepository? = null
 

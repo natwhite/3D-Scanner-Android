@@ -1,5 +1,6 @@
 package com.roomscanner.capture
 
+import android.util.Log
 import com.roomscanner.data.Keyframe
 import kotlin.math.acos
 import kotlin.math.sqrt
@@ -32,6 +33,7 @@ class KeyframeSelector(
             lastKeyframePose = currentPose
             lastKeyframeTime = currentTime
             frameCount = 0
+            Log.d(TAG, "Capturing first keyframe")
             return true
         }
 
@@ -53,6 +55,13 @@ class KeyframeSelector(
             lastKeyframePose = currentPose
             lastKeyframeTime = currentTime
             frameCount++
+
+            val reason = when {
+                distance > distanceThreshold -> "distance: ${String.format("%.2f", distance)}m"
+                angle > rotationThreshold -> "rotation: ${String.format("%.1f", angle)}°"
+                else -> "time: ${timeDelta}ms"
+            }
+            Log.d(TAG, "Keyframe trigger - $reason")
         }
 
         return shouldCapture
@@ -113,6 +122,10 @@ class KeyframeSelector(
             rotation = computeRotationAngle(prevPose, currentPose),
             timeSinceLastKeyframe = System.currentTimeMillis() - lastKeyframeTime
         )
+    }
+
+    companion object {
+        private const val TAG = "KeyframeSelector"
     }
 }
 
