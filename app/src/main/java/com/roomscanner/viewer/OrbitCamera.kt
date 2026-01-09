@@ -35,6 +35,12 @@ class OrbitCamera(
     private val vpMatrix = FloatArray(16)
 
     /**
+     * Get target position (look-at point)
+     */
+    val target: FloatArray
+        get() = floatArrayOf(targetX + panX, targetY + panY, targetZ)
+
+    /**
      * Get camera position in world space
      */
     fun getCameraPosition(): FloatArray {

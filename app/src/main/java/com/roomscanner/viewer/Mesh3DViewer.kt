@@ -136,19 +136,22 @@ private class Mesh3DView(
 }
 
 /**
- * OpenGL renderer for the mesh
+ * OpenGL renderer for 3D data (mesh or Gaussian splats)
  */
 private class Mesh3DRenderer(
     private val meshFile: File
 ) : GLSurfaceView.Renderer {
 
     val meshRenderer = MeshRenderer()
+    private val gaussianSplatRenderer = GaussianSplatRenderer()
     private val objLoader = OBJLoader()
 
     private var mesh: OBJLoader.Mesh? = null
     private var camera: OrbitCamera? = null
+    private var isGaussianSplat = false
 
     private val modelMatrix = FloatArray(16)
+    private val viewMatrix = FloatArray(16)
 
     @Volatile
     private var surfaceWidth = 0
@@ -163,23 +166,42 @@ private class Mesh3DRenderer(
         GLES20.glCullFace(GLES20.GL_BACK)
 
         try {
-            // Load mesh
-            Log.d(TAG, "Loading mesh from ${meshFile.absolutePath}")
-            mesh = objLoader.loadOBJ(meshFile)
+            // Detect file type
+            isGaussianSplat = meshFile.extension.lowercase() == "ply"
 
-            // Initialize renderer
-            meshRenderer.createOnGlThread()
-            meshRenderer.loadMesh(mesh!!)
+            if (isGaussianSplat) {
+                // Load Gaussian Splats
+                Log.d(TAG, "Loading Gaussian Splats from ${meshFile.absolutePath}")
+                gaussianSplatRenderer.createOnGlThread()
+                gaussianSplatRenderer.loadPLY(meshFile)
 
-            // Initialize camera
-            camera = OrbitCamera(mesh!!.bounds)
+                // Initialize camera with default bounds for splats
+                val bounds = OBJLoader.BoundingBox(
+                    minX = -2f, maxX = 2f,
+                    minY = -2f, maxY = 2f,
+                    minZ = -2f, maxZ = 2f
+                )
+                camera = OrbitCamera(bounds)
+                Log.d(TAG, "Gaussian Splats loaded successfully")
+            } else {
+                // Load traditional mesh
+                Log.d(TAG, "Loading mesh from ${meshFile.absolutePath}")
+                mesh = objLoader.loadOBJ(meshFile)
 
-            // Set up model matrix (identity - mesh is already in world space)
+                // Initialize renderer
+                meshRenderer.createOnGlThread()
+                meshRenderer.loadMesh(mesh!!)
+
+                // Initialize camera
+                camera = OrbitCamera(mesh!!.bounds)
+                Log.d(TAG, "Mesh loaded successfully")
+            }
+
+            // Set up model matrix (identity - data is already in world space)
             Matrix.setIdentityM(modelMatrix, 0)
 
-            Log.d(TAG, "Mesh loaded successfully")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to load mesh", e)
+            Log.e(TAG, "Failed to load 3D data", e)
         }
     }
 
@@ -202,8 +224,20 @@ private class Mesh3DRenderer(
             val mvpMatrix = FloatArray(16)
             Matrix.multiplyMM(mvpMatrix, 0, vpMatrix, 0, modelMatrix, 0)
 
-            // Draw mesh
-            meshRenderer.draw(mvpMatrix, modelMatrix, cameraPos)
+            // Extract view matrix for Gaussian Splatting
+            Matrix.setLookAtM(
+                viewMatrix, 0,
+                cameraPos[0], cameraPos[1], cameraPos[2],
+                cam.target[0], cam.target[1], cam.target[2],
+                0f, 1f, 0f
+            )
+
+            // Draw based on data type
+            if (isGaussianSplat) {
+                gaussianSplatRenderer.draw(mvpMatrix, viewMatrix)
+            } else {
+                meshRenderer.draw(mvpMatrix, modelMatrix, cameraPos)
+            }
         }
     }
 

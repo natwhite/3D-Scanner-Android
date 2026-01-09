@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.roomscanner.data.Scan
 import com.roomscanner.data.ScanRepository
 import com.roomscanner.data.ScanStatus
+import com.roomscanner.reconstruction.GaussianSplattingPipeline
 import com.roomscanner.reconstruction.ReconstructionPipeline
 import com.roomscanner.reconstruction.ReconstructionProgress
 import kotlinx.coroutines.Dispatchers
@@ -24,7 +25,12 @@ import java.io.File
 class ViewerViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = ScanRepository.getInstance(application)
-    private val reconstructionPipeline = ReconstructionPipeline(application)
+
+    // Gaussian Splatting pipeline (primary method)
+    private val gaussianSplattingPipeline = GaussianSplattingPipeline(application)
+
+    // Traditional mesh pipeline (available for fallback)
+    // private val reconstructionPipeline = ReconstructionPipeline(application)
 
     private val _pointCount = MutableStateFlow(0)
     val pointCount: StateFlow<Int> = _pointCount.asStateFlow()
@@ -104,7 +110,7 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
-     * Start reconstruction process
+     * Start reconstruction process using Gaussian Splatting
      */
     fun startReconstruction(scan: Scan) {
         if (_isProcessing.value) {
@@ -117,26 +123,26 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
             _errorMessage.value = null
 
             try {
-                Log.i(TAG, "Starting reconstruction for scan: ${scan.name}")
+                Log.i(TAG, "Starting Gaussian Splatting reconstruction for scan: ${scan.name}")
 
                 // Collect progress updates
                 launch {
-                    reconstructionPipeline.progress.collect { progress ->
+                    gaussianSplattingPipeline.progress.collect { progress ->
                         _reconstructionProgress.value = progress
                     }
                 }
 
-                // Run reconstruction
-                val result = reconstructionPipeline.reconstructScan(scan)
+                // Run Gaussian Splatting reconstruction
+                val result = gaussianSplattingPipeline.reconstructScan(scan)
 
                 result.fold(
-                    onSuccess = { meshFile ->
-                        Log.i(TAG, "Reconstruction successful: ${meshFile.absolutePath}")
-                        _meshFile.value = meshFile
+                    onSuccess = { plyFile ->
+                        Log.i(TAG, "Gaussian Splatting successful: ${plyFile.absolutePath}")
+                        _meshFile.value = plyFile
                         _isProcessing.value = false
                     },
                     onFailure = { error ->
-                        Log.e(TAG, "Reconstruction failed", error)
+                        Log.e(TAG, "Gaussian Splatting failed", error)
                         _errorMessage.value = error.message ?: "Reconstruction failed"
                         _isProcessing.value = false
                     }
