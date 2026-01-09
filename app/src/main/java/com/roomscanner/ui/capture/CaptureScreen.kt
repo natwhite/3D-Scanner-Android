@@ -3,6 +3,7 @@ package com.roomscanner.ui.capture
 import android.app.Activity
 import android.opengl.GLES20
 import android.opengl.GLSurfaceView
+import android.util.Log
 import android.view.Surface
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -43,20 +44,25 @@ fun CaptureScreen(
     var arCoreManager by remember { mutableStateOf<ARCoreManager?>(null) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
+    var shouldResumeOnSurfaceCreated by remember { mutableStateOf(true) } // Start in resumed state
 
     // Handle lifecycle
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_RESUME -> {
-                    arCoreManager?.resume()
+                    Log.d(TAG, "Lifecycle ON_RESUME")
+                    shouldResumeOnSurfaceCreated = true
                     surfaceView?.onResume()
                 }
                 Lifecycle.Event.ON_PAUSE -> {
+                    Log.d(TAG, "Lifecycle ON_PAUSE")
+                    shouldResumeOnSurfaceCreated = false
                     surfaceView?.onPause()
                     arCoreManager?.pause()
                 }
                 Lifecycle.Event.ON_DESTROY -> {
+                    Log.d(TAG, "Lifecycle ON_DESTROY")
                     arCoreManager?.destroy()
                 }
                 else -> {}
@@ -100,6 +106,8 @@ fun CaptureScreen(
                         private var cameraTextureId = -1
 
                         override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
+                            Log.d(TAG, "GL Surface Created")
+
                             // Set clear color
                             GLES20.glClearColor(0.1f, 0.1f, 0.1f, 1.0f)
 
@@ -123,9 +131,15 @@ fun CaptureScreen(
 
                             // Set camera texture for ARCore
                             manager.setCameraTextureName(cameraTextureId)
+
+                            // Resume ARCore session now that GL surface is ready
+                            if (shouldResumeOnSurfaceCreated) {
+                                manager.resume()
+                            }
                         }
 
                         override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
+                            Log.d(TAG, "GL Surface Changed: ${width}x${height}")
                             GLES20.glViewport(0, 0, width, height)
 
                             // Get display rotation
@@ -320,3 +334,5 @@ fun TrackingStatusIndicator(trackingState: TrackingState) {
         )
     }
 }
+
+private const val TAG = "CaptureScreen"

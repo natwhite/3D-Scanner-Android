@@ -2,6 +2,7 @@ package com.roomscanner.capture
 
 import android.app.Activity
 import android.media.Image
+import android.util.Log
 import com.google.ar.core.*
 import com.google.ar.core.exceptions.*
 import com.roomscanner.data.Keyframe
@@ -15,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 class ARCoreManager(private val activity: Activity) {
 
     private var session: Session? = null
+    private var isSessionPaused = true
     private val _trackingState = MutableStateFlow(TrackingState.PAUSED)
     val trackingState: StateFlow<TrackingState> = _trackingState.asStateFlow()
 
@@ -39,7 +41,7 @@ class ARCoreManager(private val activity: Activity) {
                 }
             }
 
-            // Create session
+            // Create session (starts paused by default)
             session = Session(activity).apply {
                 configure(
                     Config(this).apply {
@@ -56,10 +58,14 @@ class ARCoreManager(private val activity: Activity) {
                         focusMode = Config.FocusMode.AUTO
                     }
                 )
+                // Pause immediately to ensure we control when it resumes
+                pause()
             }
 
+            isSessionPaused = true
             _hasDepth.value = session?.isDepthModeSupported(Config.DepthMode.AUTOMATIC) == true
 
+            Log.i(TAG, "ARCore session initialized (paused)")
             Result.success(Unit)
         } catch (e: UnavailableArcoreNotInstalledException) {
             Result.failure(Exception("ARCore not installed"))
@@ -78,7 +84,17 @@ class ARCoreManager(private val activity: Activity) {
      * Resume ARCore session
      */
     fun resume() {
-        session?.resume()
+        try {
+            session?.resume()
+            isSessionPaused = false
+            Log.d(TAG, "ARCore session resumed")
+        } catch (e: CameraNotAvailableException) {
+            Log.e(TAG, "Camera not available on resume", e)
+            isSessionPaused = true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to resume ARCore session", e)
+            isSessionPaused = true
+        }
     }
 
     /**
@@ -86,6 +102,8 @@ class ARCoreManager(private val activity: Activity) {
      */
     fun pause() {
         session?.pause()
+        isSessionPaused = true
+        Log.d(TAG, "ARCore session paused")
     }
 
     /**
@@ -116,6 +134,11 @@ class ARCoreManager(private val activity: Activity) {
     fun update(): ARFrame? {
         val session = session ?: return null
 
+        // Don't update if session is paused
+        if (isSessionPaused) {
+            return null
+        }
+
         return try {
             val frame = session.update()
             val camera = frame.camera
@@ -135,15 +158,26 @@ class ARCoreManager(private val activity: Activity) {
             )
         } catch (e: NotYetAvailableException) {
             null
+        } catch (e: CameraNotAvailableException) {
+            Log.w(TAG, "Camera not available during update")
+            null
         } catch (e: Exception) {
+            Log.w(TAG, "Error during ARCore update: ${e.message}")
             null
         }
     }
 
     /**
+     * Check if session is ready for updates
+     */
+    fun isReady(): Boolean = session != null && !isSessionPaused
+
+    /**
      * Check if ARCore is supported
      */
     companion object {
+        private const val TAG = "ARCoreManager"
+
         fun isARCoreSupported(activity: Activity): Boolean {
             val availability = ArCoreApk.getInstance().checkAvailability(activity)
             return availability == ArCoreApk.Availability.SUPPORTED_INSTALLED
