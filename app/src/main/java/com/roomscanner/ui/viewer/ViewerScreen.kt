@@ -306,6 +306,7 @@ fun ProcessingView(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MeshCompletedView(
     scan: Scan,
