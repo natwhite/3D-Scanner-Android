@@ -147,9 +147,10 @@ class ReconstructionPipeline(private val context: Context) {
                     if (depthMeters < 0.1f || depthMeters > 6.0f) continue
 
                     // Unproject to camera space
+                    // ARCore camera: X right, Y down, Z forward (away from device)
                     val xCam = (x - cx) * depthMeters / fx
-                    val yCam = (y - cy) * depthMeters / fy
-                    val zCam = depthMeters
+                    val yCam = -(y - cy) * depthMeters / fy  // Negate Y for camera down convention
+                    val zCam = -depthMeters  // Negate Z for forward direction
 
                     // Transform to world space using pose
                     val point = transformPoint(xCam, yCam, zCam, pose)
@@ -261,13 +262,10 @@ class ReconstructionPipeline(private val context: Context) {
 
     /**
      * Generate mesh from point cloud
-     * Simplified approach: voxel-based mesh or direct triangulation
+     * Simplified approach: Delaunay-inspired nearest neighbor triangulation
      */
     private fun generateMesh(pointCloud: PointCloud): Mesh {
         Log.d(TAG, "Generating mesh from ${pointCloud.points.size} points")
-
-        // For PoC: Create a simple mesh by voxelizing the space
-        // This is a placeholder - real implementation would use Poisson or Ball Pivoting
 
         val vertices = mutableListOf<Vertex>()
         val faces = mutableListOf<Face>()
@@ -286,11 +284,83 @@ class ReconstructionPipeline(private val context: Context) {
             )
         }
 
-        // Simple triangulation: connect nearby points
-        // This is very basic - production would use proper meshing algorithm
-        Log.d(TAG, "Created mesh with ${vertices.size} vertices")
+        // Simple nearest-neighbor triangulation
+        // For each vertex, connect to its nearest neighbors
+        val maxConnections = 20000  // Limit to prevent excessive triangles
+        var connectionCount = 0
+
+        for (i in vertices.indices) {
+            if (connectionCount >= maxConnections) break
+
+            val v1 = vertices[i]
+
+            // Find nearest neighbors
+            val neighbors = findNearestNeighbors(v1, vertices, i, maxNeighbors = 8)
+
+            // Create triangles with nearest neighbors
+            for (j in 0 until neighbors.size - 1) {
+                if (connectionCount >= maxConnections) break
+
+                val v2Idx = neighbors[j]
+                val v3Idx = neighbors[j + 1]
+
+                // Check triangle quality (avoid degenerate triangles)
+                if (isValidTriangle(vertices[i], vertices[v2Idx], vertices[v3Idx])) {
+                    faces.add(Face(i, v2Idx, v3Idx))
+                    connectionCount++
+                }
+            }
+        }
+
+        Log.d(TAG, "Created mesh with ${vertices.size} vertices, ${faces.size} faces")
 
         return Mesh(vertices, faces)
+    }
+
+    /**
+     * Find K nearest neighbors to a vertex
+     */
+    private fun findNearestNeighbors(
+        vertex: Vertex,
+        vertices: List<Vertex>,
+        currentIdx: Int,
+        maxNeighbors: Int
+    ): List<Int> {
+        val distances = vertices.indices
+            .filter { it != currentIdx }
+            .map { idx ->
+                val v = vertices[idx]
+                val dist = distance(vertex, v)
+                idx to dist
+            }
+            .sortedBy { it.second }
+            .take(maxNeighbors)
+            .map { it.first }
+
+        return distances
+    }
+
+    /**
+     * Calculate distance between two vertices
+     */
+    private fun distance(v1: Vertex, v2: Vertex): Float {
+        val dx = v1.x - v2.x
+        val dy = v1.y - v2.y
+        val dz = v1.z - v2.z
+        return kotlin.math.sqrt(dx * dx + dy * dy + dz * dz)
+    }
+
+    /**
+     * Check if triangle is valid (not degenerate)
+     */
+    private fun isValidTriangle(v1: Vertex, v2: Vertex, v3: Vertex): Boolean {
+        // Check edge lengths - reject if any edge is too long
+        val maxEdgeLength = 0.5f  // 50cm max edge
+        val d12 = distance(v1, v2)
+        val d23 = distance(v2, v3)
+        val d31 = distance(v3, v1)
+
+        return d12 < maxEdgeLength && d23 < maxEdgeLength && d31 < maxEdgeLength
     }
 
     /**
