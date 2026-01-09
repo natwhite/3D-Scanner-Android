@@ -127,13 +127,6 @@ class ARCoreManager(private val activity: Activity) {
     }
 
     /**
-     * Get camera intrinsics
-     */
-    fun getCameraIntrinsics(): CameraIntrinsics? {
-        return session?.cameraConfig?.textureIntrinsics
-    }
-
-    /**
      * Check if ARCore is supported
      */
     companion object {
