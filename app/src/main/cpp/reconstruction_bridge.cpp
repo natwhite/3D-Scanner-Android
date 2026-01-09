@@ -35,7 +35,7 @@ Java_com_roomscanner_reconstruction_ReconstructionNative_extractFeatures(
  */
 extern "C" JNIEXPORT jint JNICALL
 Java_com_roomscanner_reconstruction_ReconstructionNative_matchFeatures(
-        JNIEnv* env,
+        JNIEnv* /* env */,
         jobject /* this */,
         jint imageId1,
         jint imageId2) {

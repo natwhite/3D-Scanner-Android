@@ -204,18 +204,73 @@ class ScanRepository(private val context: Context) {
 
     /**
      * Convert Image to JPEG bytes
+     * ARCore provides camera images in YUV_420_888 format
      */
     fun imageToJPEG(image: Image, quality: Int = 90): ByteArray {
-        val buffer = image.planes[0].buffer
-        val bytes = ByteArray(buffer.remaining())
-        buffer.get(bytes)
+        // Check image format
+        if (image.format != android.graphics.ImageFormat.YUV_420_888) {
+            Log.w(TAG, "Unexpected image format: ${image.format}")
+        }
 
-        // Decode and re-encode as JPEG if needed
-        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        val width = image.width
+        val height = image.height
+
+        // Convert YUV to RGB
+        val bitmap = yuvToRgbBitmap(image)
+
+        // Compress to JPEG
         val outputStream = java.io.ByteArrayOutputStream()
         bitmap.compress(Bitmap.CompressFormat.JPEG, quality, outputStream)
+        bitmap.recycle()
 
         return outputStream.toByteArray()
+    }
+
+    /**
+     * Convert YUV_420_888 Image to RGB Bitmap
+     */
+    private fun yuvToRgbBitmap(image: Image): Bitmap {
+        val width = image.width
+        val height = image.height
+
+        val yPlane = image.planes[0]
+        val uPlane = image.planes[1]
+        val vPlane = image.planes[2]
+
+        val yBuffer = yPlane.buffer
+        val uBuffer = uPlane.buffer
+        val vBuffer = vPlane.buffer
+
+        val ySize = yBuffer.remaining()
+        val uSize = uBuffer.remaining()
+        val vSize = vBuffer.remaining()
+
+        val yuvBytes = ByteArray(ySize + uSize + vSize)
+
+        // Copy Y plane
+        yBuffer.get(yuvBytes, 0, ySize)
+        // Copy U plane
+        vBuffer.get(yuvBytes, ySize, vSize) // Note: V and U are swapped
+        // Copy V plane
+        uBuffer.get(yuvBytes, ySize + vSize, uSize)
+
+        val yuvImage = android.graphics.YuvImage(
+            yuvBytes,
+            android.graphics.ImageFormat.NV21,
+            width,
+            height,
+            null
+        )
+
+        val out = java.io.ByteArrayOutputStream()
+        yuvImage.compressToJpeg(
+            android.graphics.Rect(0, 0, width, height),
+            100,
+            out
+        )
+
+        val imageBytes = out.toByteArray()
+        return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
     }
 
     /**
