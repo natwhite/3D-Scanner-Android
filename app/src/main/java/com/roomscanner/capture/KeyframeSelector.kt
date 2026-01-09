@@ -9,9 +9,9 @@ import kotlin.math.sqrt
  * Determines when to capture keyframes based on camera movement
  */
 class KeyframeSelector(
-    private val distanceThreshold: Float = 0.40f,  // 40cm
-    private val rotationThreshold: Float = 15f,     // 15 degrees
-    private val timeThreshold: Long = 2000L         // 2 seconds
+    private val distanceThreshold: Float = 0.15f,  // 15cm (reduced for higher resolution)
+    private val rotationThreshold: Float = 8f,     // 8 degrees (reduced for higher resolution)
+    private val timeThreshold: Long = 1000L        // 1 second (reduced for higher resolution)
 ) {
 
     private var lastKeyframePose: Keyframe.Pose? = null
