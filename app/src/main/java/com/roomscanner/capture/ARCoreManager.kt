@@ -97,6 +97,20 @@ class ARCoreManager(private val activity: Activity) {
     }
 
     /**
+     * Configure display geometry for ARCore
+     */
+    fun setDisplayGeometry(rotation: Int, width: Int, height: Int) {
+        session?.setDisplayGeometry(rotation, width, height)
+    }
+
+    /**
+     * Set camera texture name for ARCore rendering
+     */
+    fun setCameraTextureName(textureId: Int) {
+        session?.setCameraTextureName(textureId)
+    }
+
+    /**
      * Update ARCore and get current frame
      */
     fun update(): ARFrame? {

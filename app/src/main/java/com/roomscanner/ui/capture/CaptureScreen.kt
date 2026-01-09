@@ -1,7 +1,9 @@
 package com.roomscanner.ui.capture
 
 import android.app.Activity
+import android.opengl.GLES20
 import android.opengl.GLSurfaceView
+import android.view.Surface
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -95,15 +97,54 @@ fun CaptureScreen(
 
                     // Set up GL renderer for ARCore
                     setRenderer(object : GLSurfaceView.Renderer {
+                        private var cameraTextureId = -1
+
                         override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
-                            // GL setup will be done by ARCore
+                            // Set clear color
+                            GLES20.glClearColor(0.1f, 0.1f, 0.1f, 1.0f)
+
+                            // Create camera texture for ARCore
+                            val textures = IntArray(1)
+                            GLES20.glGenTextures(1, textures, 0)
+                            cameraTextureId = textures[0]
+
+                            // Set up the texture for external use (camera)
+                            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, cameraTextureId)
+                            GLES20.glTexParameteri(
+                                GLES20.GL_TEXTURE_2D,
+                                GLES20.GL_TEXTURE_MIN_FILTER,
+                                GLES20.GL_LINEAR
+                            )
+                            GLES20.glTexParameteri(
+                                GLES20.GL_TEXTURE_2D,
+                                GLES20.GL_TEXTURE_MAG_FILTER,
+                                GLES20.GL_LINEAR
+                            )
+
+                            // Set camera texture for ARCore
+                            manager.setCameraTextureName(cameraTextureId)
                         }
 
                         override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
-                            // Handle surface changes
+                            GLES20.glViewport(0, 0, width, height)
+
+                            // Get display rotation
+                            val displayRotation = when (activity.windowManager.defaultDisplay.rotation) {
+                                Surface.ROTATION_0 -> 0
+                                Surface.ROTATION_90 -> 1
+                                Surface.ROTATION_180 -> 2
+                                Surface.ROTATION_270 -> 3
+                                else -> 0
+                            }
+
+                            // Set display geometry for ARCore
+                            manager.setDisplayGeometry(displayRotation, width, height)
                         }
 
                         override fun onDrawFrame(gl: GL10?) {
+                            // Clear screen
+                            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
+
                             // Update ARCore and process frame
                             manager.update()?.let { arFrame ->
                                 viewModel.processFrame(arFrame)
