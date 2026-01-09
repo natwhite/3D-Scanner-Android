@@ -80,9 +80,20 @@ fun CaptureScreen(
     LaunchedEffect(uiState) {
         when (val state = uiState) {
             is CaptureUiState.ScanComplete -> {
+                // Pause ARCore before navigating away to prevent GL context errors
+                arCoreManager?.pause()
+                surfaceView?.onPause()
                 onComplete(state.scan)
             }
             else -> {}
+        }
+    }
+
+    // Cleanup when composable is disposed (before GL context is destroyed)
+    DisposableEffect(Unit) {
+        onDispose {
+            Log.d(TAG, "Composable disposed, cleaning up")
+            arCoreManager?.pause()
         }
     }
 
