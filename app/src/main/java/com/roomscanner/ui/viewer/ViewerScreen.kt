@@ -1,11 +1,12 @@
 package com.roomscanner.ui.viewer
 
 import android.app.Activity
-import android.graphics.BitmapFactory
 import android.util.Log
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -13,10 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.roomscanner.data.Scan
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -27,8 +25,13 @@ fun ViewerScreen(
     onBack: () -> Unit
 ) {
     var isLoading by remember { mutableStateOf(true) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var localErrorMessage by remember { mutableStateOf<String?>(null) }
+
     val pointCount by viewModel.pointCount.collectAsState()
+    val isProcessing by viewModel.isProcessing.collectAsState()
+    val progress by viewModel.reconstructionProgress.collectAsState()
+    val meshFile by viewModel.meshFile.collectAsState()
+    val errorMessage by viewModel.errorMessage.collectAsState()
 
     val scope = rememberCoroutineScope()
 
@@ -40,7 +43,7 @@ fun ViewerScreen(
                 isLoading = false
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load scan", e)
-                errorMessage = e.message
+                localErrorMessage = e.message
                 isLoading = false
             }
         }
@@ -73,7 +76,7 @@ fun ViewerScreen(
                         modifier = Modifier.align(Alignment.Center)
                     )
                 }
-                errorMessage != null -> {
+                localErrorMessage != null -> {
                     Column(
                         modifier = Modifier.align(Alignment.Center),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -85,120 +88,354 @@ fun ViewerScreen(
                             color = MaterialTheme.colorScheme.error
                         )
                         Text(
-                            text = errorMessage ?: "Unknown error",
+                            text = localErrorMessage ?: "Unknown error",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
                 }
+                isProcessing -> {
+                    // Show processing UI
+                    ProcessingView(
+                        progress = progress,
+                        modifier = Modifier.align(Alignment.Center)
+                    )
+                }
+                meshFile != null -> {
+                    // Show completed mesh
+                    MeshCompletedView(
+                        scan = scan,
+                        meshFile = meshFile!!,
+                        pointCount = pointCount
+                    )
+                }
                 else -> {
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        // Info panel
-                        Surface(
-                            modifier = Modifier.fillMaxWidth(),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            tonalElevation = 2.dp
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Text(
-                                    text = "3D Point Cloud Viewer",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Text(
-                                    text = "${scan.keyframeCount} keyframes captured",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                                if (pointCount > 0) {
-                                    Text(
-                                        text = "${pointCount.formatWithCommas()} points",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                                Text(
-                                    text = "Viewing raw depth data from ARCore",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
+                    // Show ready to process
+                    ReadyToProcessView(
+                        scan = scan,
+                        pointCount = pointCount,
+                        errorMessage = errorMessage,
+                        onProcessClick = {
+                            viewModel.startReconstruction(scan)
                         }
-
-                        // 3D View placeholder
-                        // For now, show a simple visualization message
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .weight(1f),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(16.dp)
-                            ) {
-                                Text(
-                                    text = "📷",
-                                    style = MaterialTheme.typography.displayLarge
-                                )
-                                Text(
-                                    text = "Scan Captured Successfully!",
-                                    style = MaterialTheme.typography.headlineSmall
-                                )
-                                Text(
-                                    text = "${scan.keyframeCount} frames with depth data saved",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Card(
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = MaterialTheme.colorScheme.secondaryContainer
-                                    )
-                                ) {
-                                    Column(
-                                        modifier = Modifier.padding(16.dp),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Text(
-                                            text = "PoC Status:",
-                                            style = MaterialTheme.typography.titleSmall,
-                                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                                        )
-                                        Text(
-                                            text = "✅ Week 1-2: Keyframe Capture Complete",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                                        )
-                                        Text(
-                                            text = "⏳ Week 3-7: 3D Reconstruction Pipeline",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                                        )
-                                        Text(
-                                            text = "⏳ Week 8: Full 3D Viewer",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = "Your scan data is saved in:",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = scan.scanDirectory.absolutePath,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
+                    )
                 }
             }
         }
+    }
+}
+
+@Composable
+fun ReadyToProcessView(
+    scan: Scan,
+    pointCount: Int,
+    errorMessage: String?,
+    onProcessClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Info panel
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            tonalElevation = 2.dp
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Scan Ready to Process",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Text(
+                    text = "${scan.keyframeCount} keyframes captured",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                if (pointCount > 0) {
+                    Text(
+                        text = "${pointCount.formatWithCommas()} depth points",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        // Main content
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                Icons.Default.Build,
+                contentDescription = null,
+                modifier = Modifier.size(64.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Text(
+                text = "Ready to Generate 3D Model",
+                style = MaterialTheme.typography.headlineSmall
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "This will process your scan into a 3D mesh",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Button(
+                onClick = onProcessClick,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+            ) {
+                Icon(Icons.Default.Build, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Start Processing")
+            }
+
+            if (errorMessage != null) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "Previous error: $errorMessage",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Processing Steps:",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                    Text(
+                        text = "• Fuse ARCore depth maps",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                    Text(
+                        text = "• Generate dense point cloud",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                    Text(
+                        text = "• Create 3D mesh",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                    Text(
+                        text = "• Apply textures",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                    Text(
+                        text = "• Export to OBJ format",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ProcessingView(
+    progress: com.roomscanner.reconstruction.ReconstructionProgress,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier.padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(24.dp)
+    ) {
+        CircularProgressIndicator(
+            progress = progress.progress,
+            modifier = Modifier.size(120.dp),
+            strokeWidth = 8.dp
+        )
+
+        Text(
+            text = progress.stage,
+            style = MaterialTheme.typography.titleLarge
+        )
+
+        Text(
+            text = "${(progress.progress * 100).toInt()}%",
+            style = MaterialTheme.typography.headlineMedium,
+            color = MaterialTheme.colorScheme.primary
+        )
+
+        LinearProgressIndicator(
+            progress = progress.progress,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Text(
+            text = "Please wait while we process your scan...",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+fun MeshCompletedView(
+    scan: Scan,
+    meshFile: java.io.File,
+    pointCount: Int
+) {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Success banner
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.primaryContainer,
+            tonalElevation = 2.dp
+        ) {
+            Row(
+                modifier = Modifier.padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.CheckCircle,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(32.dp)
+                )
+                Column {
+                    Text(
+                        text = "3D Model Complete!",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Text(
+                        text = "Your scan has been processed successfully",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // Model info
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Card {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Model Details",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+
+                    DetailRow("Keyframes", "${scan.keyframeCount}")
+                    DetailRow("Depth Points", pointCount.formatWithCommas())
+                    DetailRow("Format", "OBJ (Wavefront)")
+                    DetailRow("File Size", "${meshFile.length() / 1024} KB")
+
+                    Divider()
+
+                    Text(
+                        text = "File Location:",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = meshFile.absolutePath,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Next Steps:",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                    Text(
+                        text = "• View in 3D viewer (coming in Week 8)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                    Text(
+                        text = "• Import ${meshFile.name} into Blender or other 3D software",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                    Text(
+                        text = "• Use for AR/VR applications",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun DetailRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium
+        )
     }
 }
 
