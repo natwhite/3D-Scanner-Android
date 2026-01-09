@@ -136,8 +136,11 @@ class ScanRepository(private val context: Context) {
         if (!metadataFile.exists()) return@withContext null
 
         try {
-            gson.fromJson(metadataFile.readText(), Scan::class.java)
+            val scan = gson.fromJson(metadataFile.readText(), Scan::class.java)
+            // Gson can't properly deserialize File objects, so we need to reconstruct it
+            scan.copy(scanDirectory = scanDir)
         } catch (e: Exception) {
+            Log.e(TAG, "Error loading scan metadata for $scanId", e)
             null
         }
     }
@@ -152,9 +155,12 @@ class ScanRepository(private val context: Context) {
                 try {
                     val metadataFile = File(dir, "metadata.json")
                     if (metadataFile.exists()) {
-                        gson.fromJson(metadataFile.readText(), Scan::class.java)
+                        val scan = gson.fromJson(metadataFile.readText(), Scan::class.java)
+                        // Gson can't properly deserialize File objects, so we need to reconstruct it
+                        scan.copy(scanDirectory = dir)
                     } else null
                 } catch (e: Exception) {
+                    Log.e(TAG, "Error loading scan from ${dir.name}", e)
                     null
                 }
             }
