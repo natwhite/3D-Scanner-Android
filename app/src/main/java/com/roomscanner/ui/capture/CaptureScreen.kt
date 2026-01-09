@@ -1,7 +1,7 @@
 package com.roomscanner.ui.capture
 
 import android.app.Activity
-import android.view.ViewGroup
+import android.opengl.GLSurfaceView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -14,7 +14,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -23,11 +22,12 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.ar.core.TrackingState
 import com.google.ar.core.exceptions.CameraNotAvailableException
-import com.google.ar.sceneform.ArSceneView
 import com.roomscanner.capture.ARCoreManager
 import com.roomscanner.capture.CaptureUiState
 import com.roomscanner.capture.CaptureViewModel
 import com.roomscanner.data.Scan
+import javax.microedition.khronos.egl.EGLConfig
+import javax.microedition.khronos.opengles.GL10
 
 @Composable
 fun CaptureScreen(
@@ -37,7 +37,7 @@ fun CaptureScreen(
     onCancel: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    var arSceneView by remember { mutableStateOf<ArSceneView?>(null) }
+    var surfaceView by remember { mutableStateOf<GLSurfaceView?>(null) }
     var arCoreManager by remember { mutableStateOf<ARCoreManager?>(null) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -48,18 +48,13 @@ fun CaptureScreen(
             when (event) {
                 Lifecycle.Event.ON_RESUME -> {
                     arCoreManager?.resume()
-                    try {
-                        arSceneView?.resume()
-                    } catch (e: CameraNotAvailableException) {
-                        e.printStackTrace()
-                    }
+                    surfaceView?.onResume()
                 }
                 Lifecycle.Event.ON_PAUSE -> {
-                    arSceneView?.pause()
+                    surfaceView?.onPause()
                     arCoreManager?.pause()
                 }
                 Lifecycle.Event.ON_DESTROY -> {
-                    arSceneView?.destroy()
                     arCoreManager?.destroy()
                 }
                 else -> {}
@@ -84,27 +79,39 @@ fun CaptureScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // AR Scene View
+        // AR Surface View
         AndroidView(
             factory = { context ->
-                ArSceneView(context).apply {
-                    arSceneView = this
-                    layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT
-                    )
+                GLSurfaceView(context).apply {
+                    surfaceView = this
+                    preserveEGLContextOnPause = true
+                    setEGLContextClientVersion(2)
+                    setEGLConfigChooser(8, 8, 8, 8, 16, 0)
 
                     // Initialize ARCore
                     val manager = ARCoreManager(activity)
                     arCoreManager = manager
                     viewModel.initializeARCore(manager)
 
-                    // Set up frame listener
-                    scene.addOnUpdateListener {
-                        manager.update()?.let { arFrame ->
-                            viewModel.processFrame(arFrame)
+                    // Set up GL renderer for ARCore
+                    setRenderer(object : GLSurfaceView.Renderer {
+                        override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
+                            // GL setup will be done by ARCore
                         }
-                    }
+
+                        override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
+                            // Handle surface changes
+                        }
+
+                        override fun onDrawFrame(gl: GL10?) {
+                            // Update ARCore and process frame
+                            manager.update()?.let { arFrame ->
+                                viewModel.processFrame(arFrame)
+                            }
+                        }
+                    })
+
+                    renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
                 }
             },
             modifier = Modifier.fillMaxSize()

@@ -49,9 +49,6 @@ class ARCoreManager(private val activity: Activity) {
                         // Find planes for better tracking
                         planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
 
-                        // Use back camera
-                        cameraConfig = getCameraConfig(CameraConfig.FacingDirection.BACK)
-
                         // Update mode
                         updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
 
@@ -133,7 +130,7 @@ class ARCoreManager(private val activity: Activity) {
      * Get camera intrinsics
      */
     fun getCameraIntrinsics(): CameraIntrinsics? {
-        return session?.cameraConfig?.imageIntrinsics
+        return session?.cameraConfig?.textureIntrinsics
     }
 
     /**
@@ -141,8 +138,8 @@ class ARCoreManager(private val activity: Activity) {
      */
     companion object {
         fun isARCoreSupported(activity: Activity): Boolean {
-            return ArCoreApk.getInstance().checkAvailability(activity)
-                == ArCoreApk.Availability.SUPPORTED_INSTALLED
+            val availability = ArCoreApk.getInstance().checkAvailability(activity)
+            return availability == ArCoreApk.Availability.SUPPORTED_INSTALLED
         }
     }
 }
