@@ -15,6 +15,7 @@ class MeshRenderer {
 
     private var shaderProgram = 0
     private var wireframeProgram = 0
+    private var pointCloudProgram = 0
 
     // Attribute locations
     private var positionHandle = 0
@@ -31,6 +32,11 @@ class MeshRenderer {
     private var wireframePositionHandle = 0
     private var wireframeColorHandle = 0
     private var wireframeMVPHandle = 0
+
+    // Point cloud handles
+    private var pointCloudPositionHandle = 0
+    private var pointCloudColorHandle = 0
+    private var pointCloudMVPHandle = 0
 
     // Buffers
     private var vertexBuffer: FloatBuffer? = null
@@ -121,6 +127,29 @@ class MeshRenderer {
         }
     """.trimIndent()
 
+    // Point cloud shaders (with point size and per-vertex colors)
+    private val pointCloudVertexShaderCode = """
+        attribute vec3 aPosition;
+        attribute vec3 aColor;
+        uniform mat4 uMVPMatrix;
+        varying vec3 vColor;
+
+        void main() {
+            gl_Position = uMVPMatrix * vec4(aPosition, 1.0);
+            gl_PointSize = 3.0;
+            vColor = aColor;
+        }
+    """.trimIndent()
+
+    private val pointCloudFragmentShaderCode = """
+        precision mediump float;
+        varying vec3 vColor;
+
+        void main() {
+            gl_FragColor = vec4(vColor, 1.0);
+        }
+    """.trimIndent()
+
     /**
      * Initialize OpenGL resources
      */
@@ -159,6 +188,20 @@ class MeshRenderer {
         wireframePositionHandle = GLES20.glGetAttribLocation(wireframeProgram, "aPosition")
         wireframeMVPHandle = GLES20.glGetUniformLocation(wireframeProgram, "uMVPMatrix")
         wireframeColorHandle = GLES20.glGetUniformLocation(wireframeProgram, "uColor")
+
+        // Create point cloud shader program
+        val pointCloudVS = loadShader(GLES20.GL_VERTEX_SHADER, pointCloudVertexShaderCode)
+        val pointCloudFS = loadShader(GLES20.GL_FRAGMENT_SHADER, pointCloudFragmentShaderCode)
+
+        pointCloudProgram = GLES20.glCreateProgram().also {
+            GLES20.glAttachShader(it, pointCloudVS)
+            GLES20.glAttachShader(it, pointCloudFS)
+            GLES20.glLinkProgram(it)
+        }
+
+        pointCloudPositionHandle = GLES20.glGetAttribLocation(pointCloudProgram, "aPosition")
+        pointCloudColorHandle = GLES20.glGetAttribLocation(pointCloudProgram, "aColor")
+        pointCloudMVPHandle = GLES20.glGetUniformLocation(pointCloudProgram, "uMVPMatrix")
 
         Log.d(TAG, "Shader programs created successfully")
     }
@@ -285,31 +328,29 @@ class MeshRenderer {
                 GLES20.glDisableVertexAttribArray(normalHandle)
             } else {
                 // Point cloud rendering (no faces)
-                GLES20.glUseProgram(wireframeProgram)
+                GLES20.glUseProgram(pointCloudProgram)
 
-                GLES20.glEnableVertexAttribArray(wireframePositionHandle)
+                GLES20.glEnableVertexAttribArray(pointCloudPositionHandle)
+                GLES20.glEnableVertexAttribArray(pointCloudColorHandle)
 
                 vertexBuffer?.position(0)
                 GLES20.glVertexAttribPointer(
-                    wireframePositionHandle, 3, GLES20.GL_FLOAT, false, 0, vertexBuffer
+                    pointCloudPositionHandle, 3, GLES20.GL_FLOAT, false, 0, vertexBuffer
                 )
 
-                GLES20.glUniformMatrix4fv(wireframeMVPHandle, 1, false, mvpMatrix, 0)
+                colorBuffer?.position(0)
+                GLES20.glVertexAttribPointer(
+                    pointCloudColorHandle, 3, GLES20.GL_FLOAT, false, 0, colorBuffer
+                )
 
-                // Use vertex colors if available
-                if (colorBuffer != null) {
-                    // For point cloud, we need a simple shader that supports per-vertex colors
-                    // For now, use a single color
-                    GLES20.glUniform4f(wireframeColorHandle, 0.3f, 0.6f, 0.9f, 1f) // Blue points
-                }
+                GLES20.glUniformMatrix4fv(pointCloudMVPHandle, 1, false, mvpMatrix, 0)
 
-                GLES20.glPointSize(3.0f)
-
-                // Draw points
+                // Draw points (point size is set in vertex shader)
                 val vertexCount = vertexBuffer?.capacity()?.div(3) ?: 0
                 GLES20.glDrawArrays(GLES20.GL_POINTS, 0, vertexCount)
 
-                GLES20.glDisableVertexAttribArray(wireframePositionHandle)
+                GLES20.glDisableVertexAttribArray(pointCloudPositionHandle)
+                GLES20.glDisableVertexAttribArray(pointCloudColorHandle)
             }
         }
 
