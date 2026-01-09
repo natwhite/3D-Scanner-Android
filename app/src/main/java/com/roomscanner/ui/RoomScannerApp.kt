@@ -7,11 +7,19 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
+import com.google.gson.Gson
+import com.roomscanner.data.Scan
 import com.roomscanner.ui.capture.CaptureScreen
 import com.roomscanner.ui.scans.ScansListScreen
+import com.roomscanner.ui.viewer.ViewerScreen
+import java.net.URLDecoder
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 
 @Composable
 fun RoomScannerApp(
@@ -36,7 +44,10 @@ fun RoomScannerApp(
                     navController.navigate("capture")
                 },
                 onScanClick = { scan ->
-                    // TODO: Navigate to viewer
+                    // Encode scan as JSON for navigation
+                    val scanJson = Gson().toJson(scan)
+                    val encodedScan = URLEncoder.encode(scanJson, StandardCharsets.UTF_8.toString())
+                    navController.navigate("viewer/$encodedScan")
                 }
             )
         }
@@ -46,9 +57,25 @@ fun RoomScannerApp(
                 activity = activity,
                 onComplete = { scan ->
                     navController.popBackStack()
-                    // TODO: Navigate to processing
                 },
                 onCancel = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        composable(
+            route = "viewer/{scanJson}",
+            arguments = listOf(navArgument("scanJson") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val encodedScan = backStackEntry.arguments?.getString("scanJson")
+            val scanJson = URLDecoder.decode(encodedScan, StandardCharsets.UTF_8.toString())
+            val scan = Gson().fromJson(scanJson, Scan::class.java)
+
+            ViewerScreen(
+                scan = scan,
+                activity = activity,
+                onBack = {
                     navController.popBackStack()
                 }
             )
