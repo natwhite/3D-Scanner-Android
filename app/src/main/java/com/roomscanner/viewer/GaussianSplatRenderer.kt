@@ -6,33 +6,39 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import java.nio.ShortBuffer
 
 /**
- * Simplified Gaussian Splat renderer for mobile
+ * Simplified Gaussian Splat renderer for mobile (OpenGL ES 2.0)
  * Uses billboarding (quads facing camera) for each Gaussian
- * Optimized for real-time performance on mobile GPUs
+ * Pre-generates quad vertices on CPU (no gl_VertexID needed)
  */
 class GaussianSplatRenderer {
 
     private var program = 0
     private var positionHandle = 0
+    private var cornerHandle = 0
     private var colorHandle = 0
     private var scaleHandle = 0
     private var opacityHandle = 0
     private var mvpMatrixHandle = 0
     private var viewMatrixHandle = 0
 
-    // Gaussian data buffers
-    private var positionBuffer: FloatBuffer? = null
-    private var colorBuffer: FloatBuffer? = null
-    private var scaleBuffer: FloatBuffer? = null
-    private var opacityBuffer: FloatBuffer? = null
+    // Vertex data buffers (4 vertices per Gaussian)
+    private var vertexBuffer: FloatBuffer? = null  // Gaussian centers (repeated 4x)
+    private var cornerBuffer: FloatBuffer? = null   // Corner offsets (-1,-1), (1,-1), (1,1), (-1,1)
+    private var colorBuffer: FloatBuffer? = null    // Colors (repeated 4x)
+    private var scaleBuffer: FloatBuffer? = null    // Scales (repeated 4x)
+    private var opacityBuffer: FloatBuffer? = null  // Opacities (repeated 4x)
+    private var indexBuffer: ShortBuffer? = null    // Triangle indices
 
-    private var gaussianCount = 0
+    private var vertexCount = 0
+    private var indexCount = 0
 
-    // Billboard vertex shader - creates quads facing camera
+    // Billboard vertex shader - uses corner attribute instead of gl_VertexID
     private val vertexShaderCode = """
         attribute vec3 aPosition;    // Gaussian center
+        attribute vec2 aCorner;      // Corner offset (-1 to 1)
         attribute vec3 aColor;       // RGB color
         attribute float aScale;      // Uniform scale
         attribute float aOpacity;    // Alpha
@@ -45,28 +51,19 @@ class GaussianSplatRenderer {
         varying vec2 vTexCoord;
 
         void main() {
-            // Billboard corner offset (creates quad)
-            // gl_VertexID % 4 gives us corner index (0,1,2,3)
-            float cornerIdx = mod(float(gl_VertexID), 4.0);
-            vec2 corner = vec2(0.0);
-            if (cornerIdx < 0.5) corner = vec2(-1.0, -1.0);      // Bottom-left
-            else if (cornerIdx < 1.5) corner = vec2(1.0, -1.0);  // Bottom-right
-            else if (cornerIdx < 2.5) corner = vec2(1.0, 1.0);   // Top-right
-            else corner = vec2(-1.0, 1.0);                       // Top-left
-
             // Extract camera right and up vectors from view matrix
             vec3 cameraRight = vec3(uViewMatrix[0][0], uViewMatrix[1][0], uViewMatrix[2][0]);
             vec3 cameraUp = vec3(uViewMatrix[0][1], uViewMatrix[1][1], uViewMatrix[2][1]);
 
             // Create billboard vertex
             vec3 billboardPos = aPosition +
-                                (cameraRight * corner.x + cameraUp * corner.y) * aScale;
+                                (cameraRight * aCorner.x + cameraUp * aCorner.y) * aScale;
 
             gl_Position = uMVPMatrix * vec4(billboardPos, 1.0);
 
             vColor = aColor;
             vOpacity = aOpacity;
-            vTexCoord = corner * 0.5 + 0.5; // 0-1 range
+            vTexCoord = aCorner * 0.5 + 0.5; // 0-1 range
         }
     """.trimIndent()
 
@@ -111,6 +108,7 @@ class GaussianSplatRenderer {
 
         // Get attribute/uniform locations
         positionHandle = GLES20.glGetAttribLocation(program, "aPosition")
+        cornerHandle = GLES20.glGetAttribLocation(program, "aCorner")
         colorHandle = GLES20.glGetAttribLocation(program, "aColor")
         scaleHandle = GLES20.glGetAttribLocation(program, "aScale")
         opacityHandle = GLES20.glGetAttribLocation(program, "aOpacity")
@@ -121,20 +119,19 @@ class GaussianSplatRenderer {
     }
 
     /**
-     * Load Gaussians from PLY file
-     * Simplified: only reads positions, colors, scale, opacity
+     * Load Gaussians from PLY file and generate quad vertices
      */
     fun loadPLY(file: File) {
         Log.d(TAG, "Loading Gaussians from: ${file.absolutePath}")
 
         // Parse PLY header to get vertex count
         val lines = file.readLines()
-        var vertexCount = 0
+        var gaussianCount = 0
         var headerEnd = 0
 
         for ((index, line) in lines.withIndex()) {
             if (line.startsWith("element vertex")) {
-                vertexCount = line.split(" ")[2].toInt()
+                gaussianCount = line.split(" ")[2].toInt()
             }
             if (line == "end_header") {
                 headerEnd = index
@@ -142,46 +139,95 @@ class GaussianSplatRenderer {
             }
         }
 
-        Log.d(TAG, "PLY contains $vertexCount Gaussians")
+        Log.d(TAG, "PLY contains $gaussianCount Gaussians")
 
-        // For now, parse as ASCII (binary parsing would be faster)
-        // Skip header, read vertex data
-        val positions = mutableListOf<Float>()
-        val colors = mutableListOf<Float>()
-        val scales = mutableListOf<Float>()
-        val opacities = mutableListOf<Float>()
+        // Parse Gaussian data
+        val gaussians = mutableListOf<GaussianData>()
 
-        // Simple ASCII parsing for PoC
-        // In production, should parse binary PLY properly
-        for (i in (headerEnd + 1) until minOf(headerEnd + 1 + vertexCount, lines.size)) {
+        for (i in (headerEnd + 1) until minOf(headerEnd + 1 + gaussianCount, lines.size)) {
             val parts = lines[i].split(" ")
             if (parts.size >= 14) {
-                // Position
-                positions.add(parts[0].toFloat())
-                positions.add(parts[1].toFloat())
-                positions.add(parts[2].toFloat())
-
-                // Color
-                colors.add(parts[6].toFloat() / 255f)
-                colors.add(parts[7].toFloat() / 255f)
-                colors.add(parts[8].toFloat() / 255f)
-
-                // Scale (average of 3 components)
-                val scale = (parts[9].toFloat() + parts[10].toFloat() + parts[11].toFloat()) / 3f
-                scales.add(scale)
-
-                // Opacity
-                opacities.add(parts[13].toFloat())
+                gaussians.add(
+                    GaussianData(
+                        position = floatArrayOf(parts[0].toFloat(), parts[1].toFloat(), parts[2].toFloat()),
+                        color = floatArrayOf(parts[6].toInt() / 255f, parts[7].toInt() / 255f, parts[8].toInt() / 255f),
+                        scale = (parts[9].toFloat() + parts[10].toFloat() + parts[11].toFloat()) / 3f,
+                        opacity = parts[13].toFloat()
+                    )
+                )
             }
         }
 
-        gaussianCount = positions.size / 3
+        Log.d(TAG, "Parsed ${gaussians.size} Gaussians, generating quads...")
 
-        // Create buffers
-        positionBuffer = ByteBuffer.allocateDirect(positions.size * 4)
+        // Generate quad vertices (4 vertices per Gaussian)
+        val vertices = mutableListOf<Float>()
+        val corners = mutableListOf<Float>()
+        val colors = mutableListOf<Float>()
+        val scales = mutableListOf<Float>()
+        val opacities = mutableListOf<Float>()
+        val indices = mutableListOf<Short>()
+
+        // Quad corner offsets
+        val quadCorners = arrayOf(
+            floatArrayOf(-1f, -1f),  // Bottom-left
+            floatArrayOf(1f, -1f),   // Bottom-right
+            floatArrayOf(1f, 1f),    // Top-right
+            floatArrayOf(-1f, 1f)    // Top-left
+        )
+
+        gaussians.forEachIndexed { gaussianIdx, gaussian ->
+            val baseIdx = (gaussianIdx * 4).toShort()
+
+            // Create 4 vertices for this Gaussian
+            for (cornerIdx in 0..3) {
+                // Position (Gaussian center, same for all 4 vertices)
+                vertices.add(gaussian.position[0])
+                vertices.add(gaussian.position[1])
+                vertices.add(gaussian.position[2])
+
+                // Corner offset
+                corners.add(quadCorners[cornerIdx][0])
+                corners.add(quadCorners[cornerIdx][1])
+
+                // Color (same for all 4 vertices)
+                colors.add(gaussian.color[0])
+                colors.add(gaussian.color[1])
+                colors.add(gaussian.color[2])
+
+                // Scale (same for all 4 vertices)
+                scales.add(gaussian.scale)
+
+                // Opacity (same for all 4 vertices)
+                opacities.add(gaussian.opacity)
+            }
+
+            // Create two triangles for the quad
+            // Triangle 1: 0, 1, 2
+            indices.add(baseIdx)
+            indices.add((baseIdx + 1).toShort())
+            indices.add((baseIdx + 2).toShort())
+
+            // Triangle 2: 0, 2, 3
+            indices.add(baseIdx)
+            indices.add((baseIdx + 2).toShort())
+            indices.add((baseIdx + 3).toShort())
+        }
+
+        vertexCount = vertices.size / 3
+        indexCount = indices.size
+
+        // Create GPU buffers
+        vertexBuffer = ByteBuffer.allocateDirect(vertices.size * 4)
             .order(ByteOrder.nativeOrder())
             .asFloatBuffer()
-            .put(positions.toFloatArray())
+            .put(vertices.toFloatArray())
+            .position(0) as FloatBuffer
+
+        cornerBuffer = ByteBuffer.allocateDirect(corners.size * 4)
+            .order(ByteOrder.nativeOrder())
+            .asFloatBuffer()
+            .put(corners.toFloatArray())
             .position(0) as FloatBuffer
 
         colorBuffer = ByteBuffer.allocateDirect(colors.size * 4)
@@ -202,14 +248,20 @@ class GaussianSplatRenderer {
             .put(opacities.toFloatArray())
             .position(0) as FloatBuffer
 
-        Log.d(TAG, "Loaded $gaussianCount Gaussians into GPU buffers")
+        indexBuffer = ByteBuffer.allocateDirect(indices.size * 2)
+            .order(ByteOrder.nativeOrder())
+            .asShortBuffer()
+            .put(indices.toShortArray())
+            .position(0) as ShortBuffer
+
+        Log.d(TAG, "Generated $vertexCount vertices ($indexCount indices) for ${gaussians.size} Gaussians")
     }
 
     /**
      * Draw Gaussian Splats
      */
     fun draw(mvpMatrix: FloatArray, viewMatrix: FloatArray) {
-        if (gaussianCount == 0) return
+        if (vertexCount == 0) return
 
         GLES20.glUseProgram(program)
 
@@ -222,13 +274,17 @@ class GaussianSplatRenderer {
 
         // Enable attributes
         GLES20.glEnableVertexAttribArray(positionHandle)
+        GLES20.glEnableVertexAttribArray(cornerHandle)
         GLES20.glEnableVertexAttribArray(colorHandle)
         GLES20.glEnableVertexAttribArray(scaleHandle)
         GLES20.glEnableVertexAttribArray(opacityHandle)
 
-        // Bind buffers (per-Gaussian data)
-        positionBuffer?.position(0)
-        GLES20.glVertexAttribPointer(positionHandle, 3, GLES20.GL_FLOAT, false, 0, positionBuffer)
+        // Bind buffers
+        vertexBuffer?.position(0)
+        GLES20.glVertexAttribPointer(positionHandle, 3, GLES20.GL_FLOAT, false, 0, vertexBuffer)
+
+        cornerBuffer?.position(0)
+        GLES20.glVertexAttribPointer(cornerHandle, 2, GLES20.GL_FLOAT, false, 0, cornerBuffer)
 
         colorBuffer?.position(0)
         GLES20.glVertexAttribPointer(colorHandle, 3, GLES20.GL_FLOAT, false, 0, colorBuffer)
@@ -243,16 +299,16 @@ class GaussianSplatRenderer {
         GLES20.glUniformMatrix4fv(mvpMatrixHandle, 1, false, mvpMatrix, 0)
         GLES20.glUniformMatrix4fv(viewMatrixHandle, 1, false, viewMatrix, 0)
 
-        // Draw billboards (4 vertices per Gaussian)
-        // Using instancing would be better but requires OpenGL ES 3.0+
-        // For now, generate 4 vertices per Gaussian in vertex shader
-        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, gaussianCount * 4)
+        // Draw triangles
+        indexBuffer?.position(0)
+        GLES20.glDrawElements(GLES20.GL_TRIANGLES, indexCount, GLES20.GL_UNSIGNED_SHORT, indexBuffer)
 
         // Restore state
         GLES20.glDepthMask(true)
         GLES20.glDisable(GLES20.GL_BLEND)
 
         GLES20.glDisableVertexAttribArray(positionHandle)
+        GLES20.glDisableVertexAttribArray(cornerHandle)
         GLES20.glDisableVertexAttribArray(colorHandle)
         GLES20.glDisableVertexAttribArray(scaleHandle)
         GLES20.glDisableVertexAttribArray(opacityHandle)
@@ -273,6 +329,13 @@ class GaussianSplatRenderer {
             }
         }
     }
+
+    private data class GaussianData(
+        val position: FloatArray,
+        val color: FloatArray,
+        val scale: Float,
+        val opacity: Float
+    )
 
     companion object {
         private const val TAG = "GaussianSplatRenderer"
