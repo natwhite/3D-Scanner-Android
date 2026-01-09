@@ -19,32 +19,28 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ViewerScreen(
-    scan: Scan,
+    scanId: String,
     activity: Activity,
     viewModel: ViewerViewModel = viewModel(),
     onBack: () -> Unit
 ) {
-    var isLoading by remember { mutableStateOf(true) }
-    var localErrorMessage by remember { mutableStateOf<String?>(null) }
-
+    val scan by viewModel.scan.collectAsState()
     val pointCount by viewModel.pointCount.collectAsState()
     val isProcessing by viewModel.isProcessing.collectAsState()
     val progress by viewModel.reconstructionProgress.collectAsState()
     val meshFile by viewModel.meshFile.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
+    val isLoading by viewModel.isLoading.collectAsState()
 
     val scope = rememberCoroutineScope()
 
-    // Load scan data
-    LaunchedEffect(scan.id) {
+    // Load scan data by ID
+    LaunchedEffect(scanId) {
         scope.launch {
             try {
-                viewModel.loadScan(scan)
-                isLoading = false
+                viewModel.loadScanById(scanId)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load scan", e)
-                localErrorMessage = e.message
-                isLoading = false
             }
         }
     }
@@ -52,7 +48,7 @@ fun ViewerScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(scan.name) },
+                title = { Text(scan?.name ?: "Loading...") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, "Back")
@@ -71,12 +67,12 @@ fun ViewerScreen(
                 .padding(padding)
         ) {
             when {
-                isLoading -> {
+                isLoading || scan == null -> {
                     CircularProgressIndicator(
                         modifier = Modifier.align(Alignment.Center)
                     )
                 }
-                localErrorMessage != null -> {
+                errorMessage != null && !isProcessing && meshFile == null -> {
                     Column(
                         modifier = Modifier.align(Alignment.Center),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -88,7 +84,7 @@ fun ViewerScreen(
                             color = MaterialTheme.colorScheme.error
                         )
                         Text(
-                            text = localErrorMessage ?: "Unknown error",
+                            text = errorMessage ?: "Unknown error",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
@@ -103,7 +99,7 @@ fun ViewerScreen(
                 meshFile != null -> {
                     // Show completed mesh
                     MeshCompletedView(
-                        scan = scan,
+                        scan = scan!!,
                         meshFile = meshFile!!,
                         pointCount = pointCount
                     )
@@ -111,11 +107,11 @@ fun ViewerScreen(
                 else -> {
                     // Show ready to process
                     ReadyToProcessView(
-                        scan = scan,
+                        scan = scan!!,
                         pointCount = pointCount,
                         errorMessage = errorMessage,
                         onProcessClick = {
-                            viewModel.startReconstruction(scan)
+                            viewModel.startReconstruction(scan!!)
                         }
                     )
                 }

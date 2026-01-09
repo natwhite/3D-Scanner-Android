@@ -44,11 +44,31 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
+    private val _scan = MutableStateFlow<Scan?>(null)
+    val scan: StateFlow<Scan?> = _scan.asStateFlow()
+
+    /**
+     * Load scan by ID from repository
+     */
+    suspend fun loadScanById(scanId: String) = withContext(Dispatchers.IO) {
+        Log.d(TAG, "Loading scan by ID: $scanId")
+
+        val scan = repository.loadScan(scanId)
+        if (scan == null) {
+            _errorMessage.value = "Scan not found"
+            _isLoading.value = false
+            return@withContext
+        }
+
+        _scan.value = scan
+        loadScanData(scan)
+    }
+
     /**
      * Load scan and analyze data
      */
-    suspend fun loadScan(scan: Scan) = withContext(Dispatchers.IO) {
-        Log.d(TAG, "Loading scan: ${scan.name}")
+    private suspend fun loadScanData(scan: Scan) = withContext(Dispatchers.IO) {
+        Log.d(TAG, "Loading scan data: ${scan.name}")
 
         // Load keyframes
         val keyframes = repository.loadKeyframes(scan)

@@ -12,14 +12,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.google.gson.Gson
-import com.roomscanner.data.Scan
 import com.roomscanner.ui.capture.CaptureScreen
 import com.roomscanner.ui.scans.ScansListScreen
 import com.roomscanner.ui.viewer.ViewerScreen
-import java.net.URLDecoder
-import java.net.URLEncoder
-import java.nio.charset.StandardCharsets
 
 @Composable
 fun RoomScannerApp(
@@ -44,10 +39,8 @@ fun RoomScannerApp(
                     navController.navigate("capture")
                 },
                 onScanClick = { scan ->
-                    // Encode scan as JSON for navigation
-                    val scanJson = Gson().toJson(scan)
-                    val encodedScan = URLEncoder.encode(scanJson, StandardCharsets.UTF_8.toString())
-                    navController.navigate("viewer/$encodedScan")
+                    // Pass only scan ID for navigation
+                    navController.navigate("viewer/${scan.id}")
                 }
             )
         }
@@ -65,15 +58,13 @@ fun RoomScannerApp(
         }
 
         composable(
-            route = "viewer/{scanJson}",
-            arguments = listOf(navArgument("scanJson") { type = NavType.StringType })
+            route = "viewer/{scanId}",
+            arguments = listOf(navArgument("scanId") { type = NavType.StringType })
         ) { backStackEntry ->
-            val encodedScan = backStackEntry.arguments?.getString("scanJson")
-            val scanJson = URLDecoder.decode(encodedScan, StandardCharsets.UTF_8.toString())
-            val scan = Gson().fromJson(scanJson, Scan::class.java)
+            val scanId = backStackEntry.arguments?.getString("scanId") ?: return@composable
 
             ViewerScreen(
-                scan = scan,
+                scanId = scanId,
                 activity = activity,
                 onBack = {
                     navController.popBackStack()
