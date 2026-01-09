@@ -50,22 +50,19 @@ class ReconstructionPipeline(private val context: Context) {
                 throw IllegalStateException("No keyframes found in scan")
             }
 
-            // Step 2: Fuse depth maps into point cloud
-            updateProgress("Fusing depth maps", 0.2f)
-            val pointCloud = fuseDepthMaps(scan, keyframes)
-            Log.i(TAG, "Generated point cloud with ${pointCloud.size} points")
+            // Step 2: Generate mesh from reference depth map
+            updateProgress("Generating mesh", 0.2f)
+            val meshData = fuseDepthMaps(scan, keyframes)
+            Log.i(TAG, "Generated mesh with ${meshData.vertices.size} vertices, ${meshData.faces.size} faces")
 
-            // Step 3: Generate mesh
-            updateProgress("Generating mesh", 0.6f)
-            val mesh = generateMesh(pointCloud)
-            Log.i(TAG, "Generated mesh with ${mesh.vertices.size} vertices, ${mesh.faces.size} faces")
+            // Convert to Mesh format
+            val mesh = Mesh(meshData.vertices, meshData.faces)
 
-            // Step 4: Texture mesh
-            updateProgress("Texturing mesh", 0.8f)
-            textureMesh(mesh, scan, keyframes)
-            Log.i(TAG, "Textured mesh complete")
+            // Step 3: Texture mesh (colors already in vertices)
+            updateProgress("Finalizing", 0.7f)
+            Log.i(TAG, "Mesh complete with vertex colors")
 
-            // Step 5: Export
+            // Step 4: Export
             updateProgress("Exporting", 0.9f)
             val meshFile = exportMesh(scan, mesh)
             Log.i(TAG, "Exported mesh to: ${meshFile.absolutePath}")
@@ -94,99 +91,123 @@ class ReconstructionPipeline(private val context: Context) {
 
     /**
      * Fuse ARCore depth maps into dense point cloud
+     * Uses grid-based approach from reference keyframe for proper mesh structure
      */
     private suspend fun fuseDepthMaps(
         scan: Scan,
         keyframes: List<com.roomscanner.data.Keyframe>
-    ): PointCloud = withContext(Dispatchers.Default) {
-        val points = mutableListOf<Point3D>()
+    ): MeshData = withContext(Dispatchers.Default) {
+        // Use middle keyframe as reference for mesh structure
+        val referenceIdx = keyframes.size / 2
+        val referenceKeyframe = keyframes[referenceIdx]
 
-        keyframes.forEachIndexed { index, keyframe ->
-            updateProgress("Fusing depth maps", 0.2f + (index.toFloat() / keyframes.size) * 0.4f)
+        Log.d(TAG, "Using keyframe $referenceIdx as reference mesh")
 
-            // Load depth map
-            val depthPath = keyframe.depthPath ?: return@forEachIndexed
-            val depthFile = File(depthPath)
-            if (!depthFile.exists()) {
-                Log.w(TAG, "Depth file not found: $depthPath")
-                return@forEachIndexed
-            }
+        // Load reference depth and RGB
+        val depthPath = referenceKeyframe.depthPath ?: throw IllegalStateException("No depth data")
+        val depthBitmap = BitmapFactory.decodeFile(depthPath) ?: throw IllegalStateException("Failed to load depth")
+        val rgbBitmap = BitmapFactory.decodeFile(referenceKeyframe.imagePath) ?: throw IllegalStateException("Failed to load RGB")
 
-            // Load RGB image for colors
-            val rgbBitmap = BitmapFactory.decodeFile(keyframe.imagePath)
-            val depthBitmap = BitmapFactory.decodeFile(depthPath)
+        val width = depthBitmap.width
+        val height = depthBitmap.height
+        val pose = referenceKeyframe.pose
 
-            if (rgbBitmap == null || depthBitmap == null) {
-                Log.w(TAG, "Failed to load images for keyframe $index")
-                return@forEachIndexed
-            }
+        // ARCore camera intrinsics (approximate - should use actual from ARCore)
+        val fx = width * 0.8f
+        val fy = height * 0.8f
+        val cx = width / 2f
+        val cy = height / 2f
 
-            // Unproject depth to 3D points
-            val pose = keyframe.pose
-            val width = depthBitmap.width
-            val height = depthBitmap.height
+        val vertices = mutableListOf<Vertex>()
+        val faces = mutableListOf<Face>()
+        val vertexGrid = Array(height) { IntArray(width) { -1 } } // Track vertex indices
 
-            // Simple camera intrinsics (assumes typical phone camera)
-            // TODO: Use actual ARCore intrinsics
-            val fx = width * 0.8f  // Approximate focal length
-            val fy = height * 0.8f
-            val cx = width / 2f
-            val cy = height / 2f
+        updateProgress("Generating mesh from reference depth", 0.3f)
 
-            // Sample every Nth pixel to reduce point count
-            val step = 4
+        // Step 1: Create vertices from depth map grid
+        val step = 2 // Downsample for performance (every 2nd pixel)
 
-            for (y in 0 until height step step) {
-                for (x in 0 until width step step) {
-                    // Get depth value (stored as grayscale, map back to meters)
-                    val depthPixel = depthBitmap.getPixel(x, y)
-                    val depthNormalized = (depthPixel and 0xFF) / 255f
-                    val depthMeters = depthNormalized * 8.0f // ARCore depth range ~0-8m
+        for (y in 0 until height step step) {
+            for (x in 0 until width step step) {
+                // Get depth value
+                val depthPixel = depthBitmap.getPixel(x, y)
+                val depthNormalized = (depthPixel and 0xFF) / 255f
+                val depthMeters = depthNormalized * 8.0f
 
-                    // Skip invalid depths
-                    if (depthMeters < 0.1f || depthMeters > 6.0f) continue
+                // Skip invalid depths
+                if (depthMeters < 0.1f || depthMeters > 6.0f) continue
 
-                    // Unproject to camera space
-                    // ARCore camera: X right, Y down, Z forward (away from device)
-                    val xCam = (x - cx) * depthMeters / fx
-                    val yCam = -(y - cy) * depthMeters / fy  // Negate Y for camera down convention
-                    val zCam = -depthMeters  // Negate Z for forward direction
+                // Unproject to camera space
+                val xCam = (x - cx) * depthMeters / fx
+                val yCam = -(y - cy) * depthMeters / fy
+                val zCam = -depthMeters
 
-                    // Transform to world space using pose
-                    val point = transformPoint(xCam, yCam, zCam, pose)
+                // Transform to world space
+                val worldPoint = transformPoint(xCam, yCam, zCam, pose)
 
-                    // Get RGB color
-                    val rgbX = (x.toFloat() / width * rgbBitmap.width).toInt().coerceIn(0, rgbBitmap.width - 1)
-                    val rgbY = (y.toFloat() / height * rgbBitmap.height).toInt().coerceIn(0, rgbBitmap.height - 1)
-                    val color = rgbBitmap.getPixel(rgbX, rgbY)
+                // Get RGB color
+                val rgbX = (x.toFloat() / width * rgbBitmap.width).toInt().coerceIn(0, rgbBitmap.width - 1)
+                val rgbY = (y.toFloat() / height * rgbBitmap.height).toInt().coerceIn(0, rgbBitmap.height - 1)
+                val color = rgbBitmap.getPixel(rgbX, rgbY)
 
-                    points.add(
-                        Point3D(
-                            x = point[0],
-                            y = point[1],
-                            z = point[2],
-                            r = (color shr 16) and 0xFF,
-                            g = (color shr 8) and 0xFF,
-                            b = color and 0xFF
-                        )
+                // Add vertex
+                val vertexIdx = vertices.size
+                vertices.add(
+                    Vertex(
+                        x = worldPoint[0],
+                        y = worldPoint[1],
+                        z = worldPoint[2],
+                        r = (color shr 16) and 0xFF,
+                        g = (color shr 8) and 0xFF,
+                        b = color and 0xFF
                     )
-                }
+                )
+                vertexGrid[y][x] = vertexIdx
             }
-
-            rgbBitmap.recycle()
-            depthBitmap.recycle()
-
-            Log.d(TAG, "Keyframe $index: added ${points.size} points total")
         }
 
-        Log.i(TAG, "Total points before filtering: ${points.size}")
+        updateProgress("Creating mesh triangles", 0.5f)
 
-        // Simple outlier removal (remove points far from median)
-        val filteredPoints = removeOutliers(points)
+        // Step 2: Create triangles from grid structure
+        for (y in 0 until height - step step step) {
+            for (x in 0 until width - step step step) {
+                val v00 = vertexGrid[y][x]
+                val v10 = vertexGrid[y][x + step]
+                val v01 = vertexGrid[y + step][x]
+                val v11 = vertexGrid[y + step][x + step]
 
-        Log.i(TAG, "Points after filtering: ${filteredPoints.size}")
+                // Only create triangles if all 4 corners have valid depth
+                if (v00 >= 0 && v10 >= 0 && v01 >= 0 && v11 >= 0) {
+                    // Check if quad is reasonable size (not stretched)
+                    if (isValidQuad(vertices[v00], vertices[v10], vertices[v01], vertices[v11])) {
+                        // Create two triangles for the quad
+                        faces.add(Face(v00, v10, v11))
+                        faces.add(Face(v00, v11, v01))
+                    }
+                }
+            }
+        }
 
-        PointCloud(filteredPoints)
+        rgbBitmap.recycle()
+        depthBitmap.recycle()
+
+        Log.i(TAG, "Created mesh with ${vertices.size} vertices, ${faces.size} faces from reference keyframe")
+
+        MeshData(vertices, faces)
+    }
+
+    /**
+     * Check if quad is valid (edges not too stretched)
+     */
+    private fun isValidQuad(v00: Vertex, v10: Vertex, v01: Vertex, v11: Vertex): Boolean {
+        val maxEdge = 0.3f // 30cm max edge length
+
+        val d01 = distance(v00, v10)
+        val d02 = distance(v00, v01)
+        val d13 = distance(v10, v11)
+        val d23 = distance(v01, v11)
+
+        return d01 < maxEdge && d02 < maxEdge && d13 < maxEdge && d23 < maxEdge
     }
 
     /**
@@ -226,121 +247,6 @@ class ReconstructionPipeline(private val context: Context) {
     }
 
     /**
-     * Remove outlier points
-     */
-    private fun removeOutliers(points: List<Point3D>): List<Point3D> {
-        if (points.size < 100) return points
-
-        // Calculate bounding box
-        val xValues = points.map { it.x }
-        val yValues = points.map { it.y }
-        val zValues = points.map { it.z }
-
-        val xMin = xValues.minOrNull() ?: 0f
-        val xMax = xValues.maxOrNull() ?: 0f
-        val yMin = yValues.minOrNull() ?: 0f
-        val yMax = yValues.maxOrNull() ?: 0f
-        val zMin = zValues.minOrNull() ?: 0f
-        val zMax = zValues.maxOrNull() ?: 0f
-
-        // Remove points outside reasonable bounds (assuming room is < 10m in any dimension)
-        val maxDim = maxOf(xMax - xMin, yMax - yMin, zMax - zMin)
-        if (maxDim > 10f) {
-            // Filter to reasonable room size
-            return points.filter {
-                it.x in (xMin..xMax) &&
-                it.y in (yMin..yMax) &&
-                it.z in (zMin..zMax) &&
-                (it.x - xMin) < 10f &&
-                (it.y - yMin) < 10f &&
-                (it.z - zMin) < 10f
-            }
-        }
-
-        return points
-    }
-
-    /**
-     * Generate mesh from point cloud
-     * Simplified approach: Delaunay-inspired nearest neighbor triangulation
-     */
-    private fun generateMesh(pointCloud: PointCloud): Mesh {
-        Log.d(TAG, "Generating mesh from ${pointCloud.points.size} points")
-
-        val vertices = mutableListOf<Vertex>()
-        val faces = mutableListOf<Face>()
-
-        // Add all points as vertices
-        pointCloud.points.forEach { point ->
-            vertices.add(
-                Vertex(
-                    x = point.x,
-                    y = point.y,
-                    z = point.z,
-                    r = point.r,
-                    g = point.g,
-                    b = point.b
-                )
-            )
-        }
-
-        // Simple nearest-neighbor triangulation
-        // For each vertex, connect to its nearest neighbors
-        val maxConnections = 20000  // Limit to prevent excessive triangles
-        var connectionCount = 0
-
-        for (i in vertices.indices) {
-            if (connectionCount >= maxConnections) break
-
-            val v1 = vertices[i]
-
-            // Find nearest neighbors
-            val neighbors = findNearestNeighbors(v1, vertices, i, maxNeighbors = 8)
-
-            // Create triangles with nearest neighbors
-            for (j in 0 until neighbors.size - 1) {
-                if (connectionCount >= maxConnections) break
-
-                val v2Idx = neighbors[j]
-                val v3Idx = neighbors[j + 1]
-
-                // Check triangle quality (avoid degenerate triangles)
-                if (isValidTriangle(vertices[i], vertices[v2Idx], vertices[v3Idx])) {
-                    faces.add(Face(i, v2Idx, v3Idx))
-                    connectionCount++
-                }
-            }
-        }
-
-        Log.d(TAG, "Created mesh with ${vertices.size} vertices, ${faces.size} faces")
-
-        return Mesh(vertices, faces)
-    }
-
-    /**
-     * Find K nearest neighbors to a vertex
-     */
-    private fun findNearestNeighbors(
-        vertex: Vertex,
-        vertices: List<Vertex>,
-        currentIdx: Int,
-        maxNeighbors: Int
-    ): List<Int> {
-        val distances = vertices.indices
-            .filter { it != currentIdx }
-            .map { idx ->
-                val v = vertices[idx]
-                val dist = distance(vertex, v)
-                idx to dist
-            }
-            .sortedBy { it.second }
-            .take(maxNeighbors)
-            .map { it.first }
-
-        return distances
-    }
-
-    /**
      * Calculate distance between two vertices
      */
     private fun distance(v1: Vertex, v2: Vertex): Float {
@@ -348,35 +254,6 @@ class ReconstructionPipeline(private val context: Context) {
         val dy = v1.y - v2.y
         val dz = v1.z - v2.z
         return kotlin.math.sqrt(dx * dx + dy * dy + dz * dz)
-    }
-
-    /**
-     * Check if triangle is valid (not degenerate)
-     */
-    private fun isValidTriangle(v1: Vertex, v2: Vertex, v3: Vertex): Boolean {
-        // Check edge lengths - reject if any edge is too long
-        val maxEdgeLength = 0.5f  // 50cm max edge
-        val d12 = distance(v1, v2)
-        val d23 = distance(v2, v3)
-        val d31 = distance(v3, v1)
-
-        return d12 < maxEdgeLength && d23 < maxEdgeLength && d31 < maxEdgeLength
-    }
-
-    /**
-     * Apply texture to mesh
-     */
-    private fun textureMesh(
-        mesh: Mesh,
-        scan: Scan,
-        keyframes: List<com.roomscanner.data.Keyframe>
-    ) {
-        // For PoC: Store vertex colors
-        // Full implementation would:
-        // 1. Generate UV coordinates
-        // 2. Project keyframe images onto mesh
-        // 3. Create texture atlas
-        Log.d(TAG, "Texturing mesh (using vertex colors for PoC)")
     }
 
     /**
@@ -428,25 +305,12 @@ data class ReconstructionProgress(
 )
 
 /**
- * 3D Point with color
+ * Intermediate mesh data from depth processing
  */
-data class Point3D(
-    val x: Float,
-    val y: Float,
-    val z: Float,
-    val r: Int,
-    val g: Int,
-    val b: Int
+data class MeshData(
+    val vertices: List<Vertex>,
+    val faces: List<Face>
 )
-
-/**
- * Point cloud
- */
-data class PointCloud(
-    val points: List<Point3D>
-) {
-    val size: Int get() = points.size
-}
 
 /**
  * Mesh vertex
