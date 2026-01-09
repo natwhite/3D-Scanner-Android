@@ -114,6 +114,7 @@ fun CaptureScreen(
 
                     // Set up GL renderer for ARCore
                     setRenderer(object : GLSurfaceView.Renderer {
+                        private val backgroundRenderer = BackgroundRenderer()
                         private var cameraTextureId = -1
 
                         override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
@@ -122,23 +123,8 @@ fun CaptureScreen(
                             // Set clear color
                             GLES20.glClearColor(0.1f, 0.1f, 0.1f, 1.0f)
 
-                            // Create camera texture for ARCore
-                            val textures = IntArray(1)
-                            GLES20.glGenTextures(1, textures, 0)
-                            cameraTextureId = textures[0]
-
-                            // Set up the texture for external use (camera)
-                            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, cameraTextureId)
-                            GLES20.glTexParameteri(
-                                GLES20.GL_TEXTURE_2D,
-                                GLES20.GL_TEXTURE_MIN_FILTER,
-                                GLES20.GL_LINEAR
-                            )
-                            GLES20.glTexParameteri(
-                                GLES20.GL_TEXTURE_2D,
-                                GLES20.GL_TEXTURE_MAG_FILTER,
-                                GLES20.GL_LINEAR
-                            )
+                            // Create background renderer and get camera texture
+                            cameraTextureId = backgroundRenderer.createOnGlThread()
 
                             // Set camera texture for ARCore
                             manager.setCameraTextureName(cameraTextureId)
@@ -170,9 +156,19 @@ fun CaptureScreen(
                             // Clear screen
                             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
 
-                            // Update ARCore and process frame
-                            manager.update()?.let { arFrame ->
-                                viewModel.processFrame(arFrame)
+                            // Update ARCore frame
+                            manager.update()?.let { frame ->
+                                try {
+                                    // Draw camera background
+                                    backgroundRenderer.draw(frame)
+
+                                    // Get AR frame data for keyframe capture
+                                    manager.getARFrameData(frame)?.let { arFrame ->
+                                        viewModel.processFrame(arFrame)
+                                    }
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Error rendering frame: ${e.message}")
+                                }
                             }
                         }
                     })

@@ -131,7 +131,7 @@ class ARCoreManager(private val activity: Activity) {
     /**
      * Update ARCore and get current frame
      */
-    fun update(): ARFrame? {
+    fun update(): Frame? {
         val session = session ?: return null
 
         // Don't update if session is paused
@@ -145,17 +145,8 @@ class ARCoreManager(private val activity: Activity) {
 
             _trackingState.value = camera.trackingState
 
-            if (camera.trackingState != TrackingState.TRACKING) {
-                return null
-            }
-
-            ARFrame(
-                frame = frame,
-                camera = camera,
-                cameraPose = Keyframe.Pose.fromARCorePose(camera.pose),
-                depthImage = frame.acquireDepthImage16Bits(),
-                cameraImage = frame.acquireCameraImage()
-            )
+            // Return frame even if not tracking, for background rendering
+            frame
         } catch (e: NotYetAvailableException) {
             null
         } catch (e: CameraNotAvailableException) {
@@ -163,6 +154,30 @@ class ARCoreManager(private val activity: Activity) {
             null
         } catch (e: Exception) {
             Log.w(TAG, "Error during ARCore update: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Get AR frame data for keyframe capture
+     */
+    fun getARFrameData(frame: Frame): ARFrame? {
+        val camera = frame.camera
+
+        if (camera.trackingState != TrackingState.TRACKING) {
+            return null
+        }
+
+        return try {
+            ARFrame(
+                frame = frame,
+                camera = camera,
+                cameraPose = Keyframe.Pose.fromARCorePose(camera.pose),
+                depthImage = frame.acquireDepthImage16Bits(),
+                cameraImage = frame.acquireCameraImage()
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to get AR frame data: ${e.message}")
             null
         }
     }
